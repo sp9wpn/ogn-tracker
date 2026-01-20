@@ -30,11 +30,15 @@
 
 #ifdef WITH_WIFI
 #include "wifi.h"
-#endif
 
-#ifdef WITH_UPLOAD
-#include "upload.h"
-#endif
+  #ifdef WITH_UPLOAD
+  #include "upload.h"
+  #endif
+
+  #ifdef WITH_OTA_HTTPS
+  #include "ota_https.h"
+  #endif
+#endif // WITH_WIFI
 
 #ifdef WITH_AP
 #include "ap.h"
@@ -98,12 +102,6 @@
 #include "tft.h"
 #endif
 
-#ifdef WITH_USBMSC
-#include "USB.h"
-#include "USBMSC.h"
-// #include "USBCDC.h"
-#endif
-
 // =======================================================================================================
 
 uint64_t getUniqueMAC(void)                                  // 48-bit unique ID of the ESP32 chip
@@ -135,6 +133,7 @@ static int NVS_Init(void)
 
 SemaphoreHandle_t CONS_Mutex;                // Mut-Ex for the Console
 SemaphoreHandle_t I2C_Mutex;                 // Mut-Ex for the I2C
+SemaphoreHandle_t WIFI_Mutex;                // Mut-Ex for the WIFI
 
 // =======================================================================================================
 
@@ -142,35 +141,17 @@ SemaphoreHandle_t I2C_Mutex;                 // Mut-Ex for the I2C
 
 #ifdef WITH_SPIFFS_FAT // FAT replaces SPIFFS, hopefully no performace and reliability issues
 
-static wl_handle_t SPIFFS_Handle = WL_INVALID_HANDLE;
-       bool        SPIFFS_Mounted = false;
-
-static const char *SPIFFS_Path="/spiffs";
-static const char *SPIFFS_Label="intlog";
-static const int   SPIFFS_MaxOpenFiles=6;
-
-void SPIFFS_unMount(void)
-{ if(!SPIFFS_Mounted) return;
-  SPIFFS_Mounted=0;                                              // signal the file system is to be unmounted
-  Serial.printf("SPIFFS/FAT unmount\n");
-  vTaskDelay(100);                                               // give a bit of time for the log to close files
-  esp_vfs_fat_spiflash_unmount(SPIFFS_Path, SPIFFS_Handle); }
-
-void SPIFFS_Mount(void)
-{ if(SPIFFS_Mounted) return;
-  esp_vfs_fat_mount_config_t FSconf;
-  FSconf.max_files = SPIFFS_MaxOpenFiles;
+int SPIFFS_Register(const char *Path, const char *Label, size_t MaxOpenFiles)
+{ esp_vfs_fat_mount_config_t FSconf;
+  FSconf.max_files = MaxOpenFiles;
   FSconf.format_if_mount_failed = true;
   FSconf.allocation_unit_size = 4096;
-  int Ret=esp_vfs_fat_spiflash_mount(SPIFFS_Path, SPIFFS_Label, &FSconf, &SPIFFS_Handle);
-  Serial.printf("SPIFFS/FAT mount(%d)\n", Ret);
-  SPIFFS_Mounted = Ret==ESP_OK; }
+  static wl_handle_t Handle = WL_INVALID_HANDLE;
+  return esp_vfs_fat_spiflash_mount(Path, Label, &FSconf, &Handle); }
 
 int SPIFFS_Info(size_t &Total, size_t &Used, const char *Label)
-{ Total=0; Used=0;
-  if(!SPIFFS_Mounted) return 0;
-  if(Label==0) Label=SPIFFS_Label;
-  FATFS *FS=0;
+{ FATFS *FS=0;
+  Total=0; Used=0;
   size_t FreeClusters;
   int Ret = f_getfree("0:", &FreeClusters, &FS);
   // if(Ret=!FR_OK) return Ret;
@@ -183,120 +164,41 @@ int SPIFFS_Info(size_t &Total, size_t &Used, const char *Label)
 
 #else // SPIFFS: gives troubles when more than few files are open
 
-void SPIFFS_Mount(void)
+int SPIFFS_Register(const char *Path, const char *Label, size_t MaxOpenFiles)
 { esp_vfs_spiffs_conf_t FSconf =
-  { base_path: SPIFFS_Path,
-    partition_label: SPIFFS_Label,
-    max_files: SPIFFS_MaxOpenFiles,
+  { base_path: Path,
+    partition_label: Label,
+    max_files: MaxOpenFiles,
     format_if_mount_failed: true };
-  int Ret=esp_vfs_spiffs_register(&FSconf);
-  SPIFFS_Mounted = Ret==ESP_OK; }
+  return esp_vfs_spiffs_register(&FSconf); }
 
 int SPIFFS_Info(size_t &Total, size_t &Used, const char *Label)
-{ if(Label==0) Label=SPIFFS_Label;
-  return esp_spiffs_info(Label, &Total, &Used); }
+{ return esp_spiffs_info(Label, &Total, &Used); }
 
 #endif
-#endif
-
-#ifdef WITH_USBMSC
-
-static USBMSC MSC;                                  // USB-memory-device
-       USBCDC USBSerial;
-
-static uint32_t SPIFFS_Blocks = 0;
-
-static int32_t MSC_read_cb(uint32_t lba, uint32_t offset, void *buffer, uint32_t bufsize)
-{ size_t addr = (size_t)lba * 512 + offset;
-  return wl_read(SPIFFS_Handle, addr, buffer, bufsize) == ESP_OK ? (int32_t)bufsize : -1; }
-
-static int32_t MSC_write_cb(uint32_t lba, uint32_t offset, uint8_t *buffer, uint32_t bufsize)
-{ size_t addr = (size_t)lba * 512 + offset;
-  return wl_write(SPIFFS_Handle, addr, buffer, bufsize) == ESP_OK ? (int32_t)bufsize : -1; }
-
-static bool MSC_startstop_cb(uint8_t power_condition, bool start, bool load_eject)
-{ // (void)power_condition;
-  if(load_eject && !start) // when USB disconnected then mount SPIFFS for internal logging
-  { SPIFFS_Mount(); }
-  else if(start)           // when USB connected then unmount SPIFFS for internal logging
-  { SPIFFS_unMount(); }
-  return true; }
-
-static void USBMSC_Begin(void)
-{ size_t Bytes = wl_size(SPIFFS_Handle);
-  SPIFFS_Blocks = (uint32_t)(Bytes/512);
-  MSC.vendorID("OGN");
-  MSC.productID("FlashLog");
-  MSC.productRevision("1.0");
-  MSC.onRead(MSC_read_cb);
-  MSC.onWrite(MSC_write_cb);
-  MSC.onStartStop(MSC_startstop_cb);
-  MSC.mediaPresent(true);
-  MSC.begin(SPIFFS_Blocks, 512); }
-
 #endif
 
 // =======================================================================================================
 
-static uint8_t I2C_Scan(TwoWire &Wire, const char *Title)
-{ Serial.printf(Title);
-  uint32_t Time=millis();
-  uint8_t I2Cdev=0;
-  for(uint8_t Addr=0x08; Addr<=0x77; Addr++)
-  { delay(1);
-    Wire.beginTransmission(Addr);
-    if(Wire.endTransmission()==0)
-    { Serial.printf(" 0x%02X", Addr); I2Cdev++; }
-  }
-  Time=millis()-Time;
-  Serial.printf(" %d devices (%dms)\n", I2Cdev, Time);
-  return I2Cdev; }
+uint8_t I2C_Restart(uint8_t Bus)
+{ Wire.end(); Wire.begin(I2C_PinSDA, I2C_PinSCL, (uint32_t)400000); return 0; }
 
-static uint8_t I2C_Read(TwoWire &Wire, uint8_t Addr, uint8_t Reg, uint8_t *Data, uint8_t Len, uint8_t Wait)
-{ // Serial.printf("I2C_Read(%d, x%02X, x%02X, , [%d], %dms)\n", Bus, Addr, Reg, Len, Wait);
-  Wire.beginTransmission(Addr);
-  int Ret=Wire.write(Reg); if(Ret!=1) { Wire.endTransmission(true); return 0xD; }
-  Ret=Wire.endTransmission(false); if(Ret) return Ret;   // return non-zero on error
-  Ret=Wire.requestFrom(Addr, Len);                       // returns the number of bytes returned from the device
-  // if(Ret!=Len) Serial.printf("I2C_Read(, x%02X, x%02X, ...) %d=>%d\n", Addr, Reg, Len, Ret);
-  if(Ret==Len) Ret=0;
-          else Ret=0xE;
-  for(uint8_t Idx=0; Idx<Len; Idx++)
-  { int Byte=Wire.read(); if(Byte<0) { Ret=0xF; break; }
-    Data[Idx]=Byte; }
-  // Serial.printf("I2C_Read() => %d:%d [%d]\n", Ret, Idx, Len);
-  return Ret; }
-
-static uint8_t I2C_Write(TwoWire &Wire, uint8_t Addr, uint8_t Reg, uint8_t *Data, uint8_t Len, uint8_t Wait)
+uint8_t I2C_Read (uint8_t Bus, uint8_t Addr, uint8_t Reg, uint8_t *Data, uint8_t Len, uint8_t Wait)
 { Wire.beginTransmission(Addr);
-  int Ret=Wire.write(Reg); if(Ret!=1) { Wire.endTransmission(true); return 0xD; }
-  uint8_t Idx=0;
-  for( ; Idx<Len; Idx++)
-  { Ret=Wire.write(Data[Idx]); if(Ret!=1) break; }
-  Ret=Wire.endTransmission();
-  return Ret; }
-
-uint8_t I2C_Read(uint8_t Bus, uint8_t Addr, uint8_t Reg, uint8_t *Data, uint8_t Len, uint8_t Wait)
-{ if(Bus!=0) return 0xB;
-  if(!xSemaphoreTake(I2C_Mutex, 100)) return 0xA;
-  uint8_t Ret=I2C_Read(Wire, Addr, Reg, Data, Len, Wait);
-  xSemaphoreGive(I2C_Mutex);
-  // Serial.printf("I2C_Read(%d, x%02X, x%02X, , [%d], ) => %d\n", Bus, Addr, Reg, Len, Ret);
-  return Ret; }
+  int Ret=Wire.write(Reg);
+  Wire.endTransmission(false);
+  Ret=Wire.requestFrom(Addr, Len);
+  for(uint8_t Idx=0; Idx<Len; Idx++)
+  { Data[Idx]=Wire.read(); }
+  return Ret!=Len; }
 
 uint8_t I2C_Write(uint8_t Bus, uint8_t Addr, uint8_t Reg, uint8_t *Data, uint8_t Len, uint8_t Wait)
-{ if(Bus!=0) return 0xB;
-  if(!xSemaphoreTake(I2C_Mutex, 100)) return 0xA;
-  uint8_t Ret=I2C_Write(Wire, Addr, Reg, Data, Len, Wait);
-  xSemaphoreGive(I2C_Mutex);
-  return Ret; }
-
-uint8_t I2C_Restart(uint8_t Bus)
-{ if(Bus!=0) return 0xB;
-  if(!xSemaphoreTake(I2C_Mutex, 100)) return 0xA;
-  Wire.end(); Wire.begin(I2C_PinSDA, I2C_PinSCL, (uint32_t)400000);
-  xSemaphoreGive(I2C_Mutex);
-  return 0; }
+{ Wire.beginTransmission(Addr);
+  int Ret=Wire.write(Reg);
+  for(uint8_t Idx=0; Idx<Len; Idx++)
+  { Ret=Wire.write(Data[Idx]); if(Ret!=1) break; }
+  Wire.endTransmission();
+  return Ret!=1; }
 
 // =======================================================================================================
 
@@ -389,7 +291,7 @@ void OGN_LED_Flash(void)
 
 #ifdef WITH_ST7735
 
-const  uint8_t  TFT_Pages      = 8;       // six LCD pages
+const  uint8_t  TFT_Pages      = 8;       // eight LCD pages
 static uint8_t  TFT_Page       = 0;       // page currently on display
 static uint8_t  TFT_PageChange = 0;       // signal the page has been changed
 static uint8_t  TFT_PageOFF    = 0;       // Backlight to be OFF
@@ -513,7 +415,10 @@ static void Button_Single(Button2 Butt) // callback when a single press on the b
     TFT_PageOFF=0;
   else
     TFT_NextPage();
+
+  #ifdef WITH_TFT_DIM
   TFT_PageActive=millis();
+  #endif
 #endif
 }
 
@@ -723,8 +628,6 @@ static void LED_PCB_Init (void)    { }
 
 // =======================================================================================================
 
-// =======================================================================================================
-
 static char Line[128];
 static void PrintPOGNS(void);
 
@@ -732,10 +635,11 @@ void setup()
 {
   CONS_Mutex = xSemaphoreCreateMutex();      // semaphore for sharing the writing to the console
   I2C_Mutex  = xSemaphoreCreateMutex();      // semaphore for sharing the I2C bus
+  WIFI_Mutex = xSemaphoreCreateMutex();      // semaphore for sharing the WIFI usage
 
   NVS_Init();                                // initialize storage in flash like for parameters
 #ifdef WITH_SPIFFS
-  SPIFFS_Mount();                            // initialize the file system in the Flash
+  SPIFFS_Register();                         // initialize the file system in the Flash
 #endif
 
 // #ifdef WITH_OGN
@@ -756,34 +660,43 @@ void setup()
 #endif
   Parameters.setDefault(getUniqueAddress()); // set default parameter values
   if(Parameters.ReadFromNVS()!=ESP_OK)       // try to get parameters from NVS
-  { // Serial.printf("Parameters could not be read from NVS: resetting to defaults\n");
+  { Serial.printf("Parameters could not be read from NVS: resetting to defaults\n");
     Parameters.WriteToNVS(); }               // if did not work: try to save (default) parameters to NVS
   if(Parameters.CONbaud<2400 || Parameters.CONbaud>921600 || Parameters.CONbaud%2400)
   { Parameters.CONbaud=115200;
-    Parameters.WriteToNVS(); }
-  if(Parameters.BTname[0]==0)                // for the BT to work
-  { Parameters.getAprsCall(Parameters.BTname);
     Parameters.WriteToNVS(); }
 
 #ifdef HARD_NAME
   strcpy(Parameters.Hard, HARD_NAME);
 #endif
 #ifdef SOFT_NAME
-  strcpy(Parameters.Soft, SOFT_NAME);
+  #ifdef WITH_OTA_HTTPS
+    if (Parameters.Soft[0] == 0)             // with OTA, firmware serial number is stored as Parameters.Soft
+  #endif
+      strcpy(Parameters.Soft, SOFT_NAME);
 #endif
 
-#ifdef WITH_USBMSC
-   USBMSC_Begin();
-   USB.begin();
-   USBSerial.begin(Parameters.CONbaud);
-#else
-  Serial.begin(Parameters.CONbaud);          // for USB Console baud rate probably does not matter here
+// ovewrite Parameters with any entries from local files
+Parameters.ReadFromFile("/spiffs/TRACKER.CFG");
+Parameters.ReadFromFile("/spiffs/WIFI.CFG");
+
+// last resort WIFI/OTA parameters in case configuration is lost
+#ifdef WITH_WIFI
+#ifdef WITH_OTA_HTTPS
+  if (Parameters.WIFIname[0][0] == 0) {
+    strcpy(Parameters.WIFIname[0], "OGN-OTA-WIFI");
+    strcpy(Parameters.WIFIpass[0], "OpenGliderNetwork");
+  }
+  if (Parameters.FirmwareURL[0] == 0)
+    strcpy(Parameters.UploadURL, "http://192.168.142.10/firmware.bin");
 #endif
+#endif
+
 
 #if ARDUINO_USB_CDC_ON_BOOT==1
-  Serial.setTxTimeoutMs(10);                 // to prevent delays and blocking of threads which send data to the USB console
+  Serial.setTxTimeoutMs(0);                  // to prevent delays and blocking of threads which send data to the USB console
 #endif
-
+  Serial.begin(Parameters.CONbaud);          // USB Console: baud rate probably does not matter here
   GPS_UART_Init();
 
   Serial.printf("OGN-Tracker: Hard:%s Soft:%s\n", Parameters.Hard, Parameters.Soft);
@@ -849,25 +762,28 @@ void setup()
 
 #ifdef I2C_PinSCL
   Wire.begin(I2C_PinSDA, I2C_PinSCL, (uint32_t)400000); // (SDA, SCL, Frequency) I2C on the correct pins
-  Wire.setTimeOut(10);                                  // [ms]
+  Wire.setTimeOut(20);                                  // [ms]
 #endif
 
 #ifdef WITH_THINKNODE_M5
   PCA_Init();
 #endif
 
+// #ifdef WITH_EPAPER
+//   EPD_Init();
+//   EPD_DrawID();
+// #endif
+
 #ifdef PMU_I2C_PinSCL
   static TwoWire PMU_I2C = TwoWire(1);
   PMU_I2C.begin(PMU_I2C_PinSDA, PMU_I2C_PinSCL, (uint32_t)400000);
-  PMU_I2C.setTimeOut(10);
-  // Serial.printf("Power/charge chip I2C bus initialized\n");
-  I2C_Scan(PMU_I2C, "PMU I2C bus:");
+  PMU_I2C.setTimeOut(20);
 #endif
 
 #ifdef WITH_AXP
-#ifdef PMU_I2C_PinSCL  // if a separate I2C bus for the PMU
+#ifdef PMU_I2C_PinSCL
   if(AXP.begin(PMU_I2C, AXP192_SLAVE_ADDRESS)!=AXP_FAIL)
-#else                  // if a single I2C bus
+#else
   if(AXP.begin(Wire, AXP192_SLAVE_ADDRESS)!=AXP_FAIL)
 #endif
   { HardwareStatus.AXP192=1; Serial.println("Power/charge chip AXP192 detected"); }
@@ -891,7 +807,7 @@ void setup()
     Serial.printf("  Batt: %5.3fV (%5.3f-%5.3f)A\n",
               0.001f*AXP.getBattVoltage(), 0.001f*AXP.getBattChargeCurrent(), 0.001f*AXP.getBattDischargeCurrent());
   }
-#endif  // WITH_AXP
+#endif
 #ifdef WITH_XPOWERS
   if(PMU==0)
   {
@@ -937,23 +853,23 @@ void setup()
 #endif
 #ifdef WITH_TBEAMS3
     // GNSS RTC PowerVDD 3300mV
-    PMU->setPowerChannelVoltage(XPOWERS_VBACKUP, 3300);
-    PMU->enablePowerOutput(XPOWERS_VBACKUP);
-// #ifdef WITH_BME280
+    // PMU->setPowerChannelVoltage(XPOWERS_VBACKUP, 3300);
+    // PMU->enablePowerOutput(XPOWERS_VBACKUP);
+#ifdef WITH_BME280
     PMU->setPowerChannelVoltage(XPOWERS_ALDO1, 3300);
     PMU->enablePowerOutput(XPOWERS_ALDO1);
-// #endif
-// #ifdef WITH_OLED
+#endif
+#ifdef WITH_OLED
     PMU->setPowerChannelVoltage(XPOWERS_ALDO2, 3300);
     PMU->enablePowerOutput(XPOWERS_ALDO2);
-// #endif
+#endif
     // RF VDD 3300mV
     PMU->setPowerChannelVoltage(XPOWERS_ALDO3, 3300);
     PMU->enablePowerOutput(XPOWERS_ALDO3);
     // GNSS VDD 3300mV
     PMU->setPowerChannelVoltage(XPOWERS_ALDO4, 3300);
     PMU->enablePowerOutput(XPOWERS_ALDO4);
-#endif //WITH_TBEAMS3
+#endif
     // set charging LED flashing
     PMU->setChargingLedMode(XPOWERS_CHG_LED_BLINK_1HZ); }
   if(HardwareStatus.AXP192 || HardwareStatus.AXP210)
@@ -964,13 +880,20 @@ void setup()
     // Serial.printf("  Batt: %5.3fV (%5.3f-%5.3f)A\n",
     //           0.001f*PMU->getBattVoltage(), 0.001f*PMU->getBattChargeCurrent(), 0.001f*PMU->getBattDischargeCurrent());
   }
-#endif // WITH_XPOWERS
+#endif
   if(!HardwareStatus.AXP192 && !HardwareStatus.AXP202 && !HardwareStatus.AXP210)  // if none of the power controllers detected
   { ADC_Init(); }                                               // then we use ADC to measue the battery voltage
 
-#ifdef I2C_PinSCL
-  I2C_Scan(Wire, "I2C bus:");
-#endif
+/*
+  Serial.printf("I2C scan:");
+  uint8_t I2Cdev=0;
+  for(uint8_t Addr=0x01; Addr<128; Addr++)
+  { Wire.beginTransmission(Addr);
+    if(Wire.endTransmission(Addr)==0) { Serial.printf(" 0x%02X", Addr); I2Cdev++; }
+                                 else { Wire.flush(); }
+  }
+  Serial.printf(" %d devices\n", I2Cdev);
+*/
 
   char Info[512];
   int InfoLen=0;
@@ -1001,12 +924,12 @@ void setup()
   WIFI_State.Flags=0;
   esp_err_t Err=WIFI_Init();
 #ifdef DEBUG_PRINT
-  if(xSemaphoreTake(CONS_Mutex, 100))
-  { Format_String(CONS_UART_Write, "WIFI_Init() => ");
-    if(Err>=ESP_ERR_WIFI_BASE) Err-=ESP_ERR_WIFI_BASE;
-    Format_SignDec(CONS_UART_Write, Err);
-    Format_String(CONS_UART_Write, "\n");
-    xSemaphoreGive(CONS_Mutex); }
+  xSemaphoreTake(CONS_Mutex, portMAX_DELAY);
+  Format_String(CONS_UART_Write, "WIFI_Init() => ");
+  if(Err>=ESP_ERR_WIFI_BASE) Err-=ESP_ERR_WIFI_BASE;
+  Format_SignDec(CONS_UART_Write, Err);
+  Format_String(CONS_UART_Write, "\n");
+  xSemaphoreGive(CONS_Mutex);
 #endif
 #endif
 
@@ -1041,6 +964,19 @@ void setup()
 
 #ifdef WITH_BEEPER
   Beep_Init();
+  // Beep(800, 32);
+  // delay(200);
+  // Beep(1000, 32);
+  // delay(200);
+  // Beep(0);
+  // delay(200);
+  // Beep_Note(Play_Vol_1 | Play_Oct_0 | 0x05);
+  // delay(200);
+  // Beep_Note(Play_Vol_1 | Play_Oct_0 | 0x08);
+  // delay(200);
+  // Beep_Note(Play_Vol_0 | Play_Oct_0 | 0x00);
+  // delay(200);
+
   Play(Play_Vol_1 | Play_Oct_0 | 0x05, 250);
   Play(Play_Vol_1 | Play_Oct_0 | 0x08, 250);
   Play(Play_Vol_0 | Play_Oct_0 | 0x00, 100);
@@ -1072,6 +1008,9 @@ void setup()
 #endif
 #ifdef WITH_EPAPER
   xTaskCreate(EPD_Task    ,  "EPD" ,  5000, NULL, 0, NULL);  //
+#endif
+#ifdef WITH_OTA_HTTPS
+  xTaskCreate(vTaskOTA    , "OTA"  ,  5000, NULL, 0, NULL);
 #endif
 
 }
@@ -1111,12 +1050,13 @@ static UBX_RxMsg  UBX;
 
 static void PrintParameters(void)                              // print parameters stored in Flash
 { Parameters.Print(Line);
-  if(!xSemaphoreTake(CONS_Mutex, 100)) return;                 // ask exclusivity on UART1
+  xSemaphoreTake(CONS_Mutex, portMAX_DELAY);                   // ask exclusivity on UART1
   Format_String(CONS_UART_Write, Line);
-  xSemaphoreGive(CONS_Mutex); }                                // give back UART1 to other tasks
+  xSemaphoreGive(CONS_Mutex);                                  // give back UART1 to other tasks
+}
 
 static void PrintPOGNS(void)                                   // print parameters in the $POGNS form
-{ if(!xSemaphoreTake(CONS_Mutex, 100))
+{ xSemaphoreTake(CONS_Mutex, portMAX_DELAY);
   Parameters.WritePOGNS(Line);
   Format_String(CONS_UART_Write, Line);
   Parameters.WritePOGNS_Pilot(Line);
@@ -1133,7 +1073,8 @@ static void PrintPOGNS(void)                                   // print paramete
   Parameters.WritePOGNS_Stratux(Line);
   Format_String(CONS_UART_Write, Line);
 #endif
-  xSemaphoreGive(CONS_Mutex); }
+  xSemaphoreGive(CONS_Mutex);                                          //
+  return; }
 
 #ifdef WITH_CONFIG
 static void ReadParameters(void)  // read parameters requested by the user in the NMEA sent.
@@ -1210,11 +1151,7 @@ static void PrintLoRaWAN()
 #endif
 
 static void ProcessCtrlF(void)                                  // list log files to the console
-{
-#ifdef WITH_SPIFFS
-  if(!SPIFFS_Mounted) return;
-#endif
-  if(!xSemaphoreTake(CONS_Mutex, 50)) return;
+{ xSemaphoreTake(CONS_Mutex, portMAX_DELAY);
 #ifdef WITH_SPIFFS
   char FullName[32];
   strcpy(FullName, "/spiffs/");
@@ -1248,7 +1185,7 @@ static void ProcessCtrlF(void)                                  // list log file
   xSemaphoreGive(CONS_Mutex); }
 
 static void ProcessCtrlC(void)                                  // print system state to the console
-{ if(!xSemaphoreTake(CONS_Mutex, 50)) return;
+{ xSemaphoreTake(CONS_Mutex, portMAX_DELAY);
   Parameters.Print(Line);
   Format_String(CONS_UART_Write, Line);
   Format_String(CONS_UART_Write, "GPS: ");
@@ -1297,6 +1234,7 @@ static int ProcessInput(void)
   const uint8_t CtrlF = 'F'-'@';
   const uint8_t CtrlL = 'L'-'@';
   const uint8_t CtrlO = 'O'-'@';
+  const uint8_t CtrlP = 'P'-'@';
   const uint8_t CtrlT = 'T'-'@';
   const uint8_t CtrlX = 'X'-'@';
 
@@ -1318,6 +1256,10 @@ static int ProcessInput(void)
 #endif
     if(Byte==CtrlX) ProcessCtrlX();                                // double Ctrl-X restarts the system
 #endif // of WITH_GPS_UBX_PASS
+
+#ifdef WITH_OTA_HTTPS
+    if(Byte==CtrlP) print_ota_status();                            // print OTA partitions
+#endif
 
     NMEA.ProcessByte(Byte);                                       // pass the byte through the NMEA processor
     if(NMEA.isComplete())                                         // if complete NMEA:
@@ -1374,11 +1316,7 @@ void loop()
     OLED.clearBuffer();
     OLED_DrawGPS(OLED.getU8g2(), GPS);
     OLED_DrawStatusBar(OLED.getU8g2(), GPS);
-    if(xSemaphoreTake(I2C_Mutex, 100))
-    { // uint32_t Time=millis();
-      OLED.sendBuffer();                // takes about 40 ms
-      // Time=millis()-Time; Serial.printf("OLED.sendBuffer():%ums\n", Time);
-      xSemaphoreGive(I2C_Mutex); }
+    OLED.sendBuffer();
 #endif
 #ifdef WITH_ST7735
     TFT_PageChange=1;

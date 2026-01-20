@@ -293,7 +293,7 @@ static void ParmForm_Other(httpd_req_t *Req)  // produce HTML form for parameter
   httpd_resp_sendstr_chunk(Req, "<form action=\"/parm.html\" method=\"POST\" id=\"Other\">\n");
 
   Begin_Control_Row(Req, "Freq. plan");
-  const char *FreqPlanTable[6] = { "Auto", "Europe/Africa", "USA/Canada", "Australia/Chile", "New Zealand", "Izrael" };
+  const char *FreqPlanTable[6] = { "Auto", "Europe/Africa", "USA/Canada", "Australia/Chile", "New Zeeland", "Izrael" };
   SelectList(Req, "FreqPlan", FreqPlanTable, 6, Parameters.FreqPlan);
   End_Control_Row(Req);
 
@@ -319,7 +319,7 @@ static void ParmForm_Other(httpd_req_t *Req)  // produce HTML form for parameter
   End_Control_Row(Req);
 
   Begin_Control_Row(Req, "Verbose");
-  const char *VerboseTable[2] = { "0 (off)", "1 (on)" };
+  const char *VerboseTable[2] = { "0 (off)", "1 (NMEA-like and GPS data)", "2 (reserved for future use)", "3 (Both)" };
   SelectList(Req, "Verbose", VerboseTable, 2, Parameters.Verbose);
   End_Control_Row(Req);
 

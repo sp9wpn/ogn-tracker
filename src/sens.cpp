@@ -101,14 +101,12 @@ static LowPass2<int64_t,10,9,12> PressAver, // low pass (average) filter for pre
 
 static Delay<int32_t, 8>        PressDelay; // 4-second delay for long-term climb rate
 
-static char Line[128];                      // line to prepare the barometer NMEA sentence
+static char Line[128];                       // line to prepare the barometer NMEA sentence
 
 static uint8_t InitBaro(void)
 { Baro.Bus=BARO_I2C;
   uint8_t Err=Baro.CheckID();
-  // Serial.printf("Baro.CheckID() => Err:%d\n", Err);
   if(Err==0) Err=Baro.ReadCalib();
-  // Serial.printf("Baro.ReadCalib() => Err:%d\n", Err);
 #ifdef WITH_BMP180
   if(Err==0) Err=Baro.AcquireRawTemperature();
   if(Err==0) { Baro.CalcTemperature(); AverPress=0; AverCount=0; }
@@ -118,7 +116,6 @@ static uint8_t InitBaro(void)
   if(Err==0) { Baro.Calculate(); }
 #endif
   // if(Err) LED_BAT_On();
-  // Serial.printf("InitBaro() => Err:%d\n", Err);
   return Err==0 ? Baro.ADDR:0; }
 
 static void ProcBaro(void)
@@ -135,11 +132,13 @@ static void ProcBaro(void)
     TickType_t Start=xTaskGetTickCount();
     uint8_t Err=Baro.AcquireRawTemperature();                             // measure temperature
     if(Err==0) { Baro.CalcTemperature(); AverPress=0; AverCount=0; }      // clear the average
+/*
           else { PipeCount=0;
-	         // I2C_Restart(Baro.Bus);
+	         I2C_Restart(Baro.Bus);
                  vTaskDelay(20);
                  InitBaro(); // try to recover I2C bus and baro
 		 return; }
+*/
     TickType_t End=Start;
     for(uint8_t Idx=0; Idx<16; Idx++)
     { uint8_t Err=Baro.AcquireRawPressure();                              // take pressure measurement
@@ -264,7 +263,7 @@ static void ProcBaro(void)
       Line[Len++]=','; }
 #endif
     Len+=NMEA_AppendCheckCRNL(Line, Len);
-    if(Parameters.Verbose)
+    if(Parameters.Verbose & 0b10)
     { if(xSemaphoreTake(CONS_Mutex, 20))
       { Format_String(CONS_UART_Write, Line, 0, Len);                       // send NMEA sentence to the console (UART1)
         xSemaphoreGive(CONS_Mutex); }
@@ -285,7 +284,7 @@ static void ProcBaro(void)
     Len+=Format_String(Line+Len, "f,");                              // normally f for feet, but metres and m works with XcSoar
     Len+=Format_String(Line+Len, "3");                               // 1 no fix, 2 - 2D, 3 - 3D; assume 3D for now
     Len+=NMEA_AppendCheckCRNL(Line, Len);
-    if(Parameters.Verbose)
+    if(Parameters.Verbose & 0b01)
     { if(xSemaphoreTake(CONS_Mutex, 10))
       { Format_String(CONS_UART_Write, Line, 0, Len);                           // send NMEA sentence to the console (UART1)
         xSemaphoreGive(CONS_Mutex); }
@@ -311,7 +310,7 @@ static void ProcBaro(void)
     Len+=Format_UnsDec(Line+Len, (BatteryVoltage+128)>>8, 4, 3);     // [mV] Battery voltage
     // Len+=Format_String(Line+Len, "999");                          // [%] battery level
     Len+=NMEA_AppendCheckCRNL(Line, Len);
-    if(Parameters.Verbose)
+    if(Parameters.Verbose & 0b01)
     { if(xSemaphoreTake(CONS_Mutex, 20))
       { Format_String(CONS_UART_Write, Line, 0, Len);                           // send NMEA sentence to the console (UART1)
         xSemaphoreGive(CONS_Mutex); }
@@ -355,32 +354,32 @@ void vTaskSENS(void* pvParameters)
 
 #ifdef WITH_BMP180
   Format_String(CONS_UART_Write, " BMP180: ");
-  if(Detected) { Format_String(CONS_UART_Write, "@"); Format_Hex(CONS_UART_Write, Detected); }
-         else  Format_String(CONS_UART_Write, "not detected");
+  if(Detected) { Format_String(CONS_UART_Write, " @"); Format_Hex(CONS_UART_Write, Detected); }
+         else  Format_String(CONS_UART_Write, " ?!");
 #endif
 
 #ifdef WITH_BMP280
   Format_String(CONS_UART_Write, " BMP280: ");
-  if(Detected) { Format_String(CONS_UART_Write, "@"); Format_Hex(CONS_UART_Write, Detected); }
-         else  Format_String(CONS_UART_Write, "not detected");
+  if(Detected) { Format_String(CONS_UART_Write, " @"); Format_Hex(CONS_UART_Write, Detected); }
+         else  Format_String(CONS_UART_Write, " ?!");
 #endif
 
 #ifdef WITH_BME280
   Format_String(CONS_UART_Write, " BME280: ");
-  if(Detected) { Format_String(CONS_UART_Write, "@"); Format_Hex(CONS_UART_Write, Detected); }
-         else  Format_String(CONS_UART_Write, "not detected");
+  if(Detected) { Format_String(CONS_UART_Write, " @"); Format_Hex(CONS_UART_Write, Detected); }
+         else  Format_String(CONS_UART_Write, " ?!");
 #endif
 
 #ifdef WITH_MS5607
   Format_String(CONS_UART_Write, " MS5607: ");
-  if(Detected) { Format_String(CONS_UART_Write, "@"); Format_Hex(CONS_UART_Write, Detected); }
-         else  Format_String(CONS_UART_Write, "not detected");
+  if(Detected) { Format_String(CONS_UART_Write, " @"); Format_Hex(CONS_UART_Write, Detected); }
+         else  Format_String(CONS_UART_Write, " ?!");
 #endif
 
 #ifdef WITH_MS5611
   Format_String(CONS_UART_Write, " MS5611: ");
-  if(Detected) { Format_String(CONS_UART_Write, "@"); Format_Hex(CONS_UART_Write, Detected); }
-         else  Format_String(CONS_UART_Write, "not detected");
+  if(Detected) { Format_String(CONS_UART_Write, " @"); Format_Hex(CONS_UART_Write, Detected); }
+         else  Format_String(CONS_UART_Write, " ?!");
 #endif
 
   Format_String(CONS_UART_Write, "\n");
@@ -389,9 +388,8 @@ void vTaskSENS(void* pvParameters)
   while(1)
   {
 #if defined(WITH_BMP180) || defined(WITH_BMP280) || defined(WITH_MS5607) || defined(WITH_BME280) || defined(WITH_MS5611)
-         if(Baro.ADDR==0) { vTaskDelay(500); InitBaro(); }
-    else if(PowerMode) ProcBaro();
-                  else vTaskDelay(100);
+    if(PowerMode) ProcBaro();
+             else vTaskDelay(100);
 #else
     vTaskDelay(1000);
 #endif

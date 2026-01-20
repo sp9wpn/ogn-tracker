@@ -3,12 +3,6 @@
 #include <Arduino.h>
 #include <stdint.h>
 
-#ifdef WITH_USBMSC
-#include "USBCDC.h"
-extern USBCDC USBSerial;
-#define Serial USBSerial
-#endif
-
 // #define millis() (xTaskGetTickCount())
 #define xTaskGetTickCount() (millis())
 
@@ -78,6 +72,7 @@ extern FlashParameters Parameters;
 
 extern SemaphoreHandle_t CONS_Mutex;
 extern SemaphoreHandle_t I2C_Mutex;
+extern SemaphoreHandle_t WIFI_Mutex;
 
 extern uint8_t PowerMode;                 // 0=sleep/minimal power, 1=comprimize, 2=full power
 
@@ -145,11 +140,11 @@ void GPS_DISABLE(void);
 #endif
 
 uint16_t BatterySense(int Samples=4); // [mV]
+uint16_t BatterySenseRaw(int Samples=4); // [mV]
 
 #ifdef WITH_SPIFFS
-int  SPIFFS_Register(void);
-int  SPIFFS_Info(size_t &Total, size_t &Used, const char *Label=0);
-extern bool SPIFFS_Mounted;
+int  SPIFFS_Register(const char *Path="/spiffs", const char *Label="intlog", size_t MaxOpenFiles=5);
+int  SPIFFS_Info(size_t &Total, size_t &Used, const char *Label="intlog");
 #endif
 
 typedef union

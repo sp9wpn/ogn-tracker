@@ -9,9 +9,6 @@
 
 #include "timesync.h"
 
-// #define DEBUG_RX    // print debug info for received packets
-// #define DEBUG_SLOT  // print debug info when the TX/RX slot starts
-
 // =======================================================================================================
 
  FreqPlan Radio_FreqPlan;       // RF frequency hopping scheme
@@ -362,7 +359,7 @@ static int Radio_Receive(uint8_t PktLen, int Manch, uint8_t SysID, uint8_t Chann
   }
   RxPkt->Manchester = Manch;
   RxPkt->Channel = Channel;                                              // Radio channel
-#ifdef DEBUG_RX
+#ifdef DEBUG_PRINT
     if(SysID==Radio_SysID_LDR && xSemaphoreTake(CONS_Mutex, 20))
     { Serial.printf("RadioRx: Sys:%02X [%d%c]/%d #%d %+4.1fdBm ",
          SysID, PktLen, Manch?'m':'_', RxLen, Channel, -0.5*RxPkt->RSSI);
@@ -378,7 +375,7 @@ static int Radio_Receive(uint8_t PktLen, int Manch, uint8_t SysID, uint8_t Chann
   uint8_t ManchErr=RxPkt->ErrCount();
   if(SysID>=8 || ManchErr>=16) return 0;
   LED_OGN_RX(10);
-#ifdef DEBUG_RX
+#ifdef DEBUG_PRINT
   if(xSemaphoreTake(CONS_Mutex, 20))
   { Serial.printf("RadioRx: %5.3fs [#%d:%d:%2d:%c%d] %+4.1fdBm ",
              1e-3*millis(), Channel, SysID, PktLen, Manch?'M':'_', ManchErr, -0.5*RxPkt->RSSI);
@@ -433,7 +430,7 @@ static int Radio_Slot(uint8_t TxChannel, float TxPower, uint32_t msTimeLen, cons
   bool SameChan = TxChannel==RxChannel;
   float TxFreq = 1e-6*Radio_FreqPlan.getChanFrequency(TxChannel);   // Frequency for transmission
   float RxFreq = 1e-6*Radio_FreqPlan.getChanFrequency(RxChannel);   // Frequency for reception
-#ifdef DEBUG_SLOT
+#ifdef DEBUG_PRINT
   if(xSemaphoreTake(CONS_Mutex, 20))
   { Serial.printf("Radio_Slot: %dms, %s, Tx:%s:%d:%5.1fMHz:%1.0fdBm, Rx:%s:%d:%5.1fMHz\n",
               msTimeLen, TxPacket?"RX/TX":"RX/--",
@@ -543,7 +540,7 @@ static int Radio_TxOBAND(uint8_t *Packet, uint8_t Len)              // transmit 
 // =======================================================================================================
 
 // setup Radio for FANET or MESHT
-static void Radio_ConfigLoRa(float BW, uint8_t SF, uint8_t PreambleLen, uint8_t Sync, uint8_t CRa)
+static void Radio_ConfigLoRa(uint8_t PreambleLen, uint8_t Sync, uint8_t CRa)
 {                                                                  // first switch to LoRa mode
 #ifdef WITH_SX1262
   if(Radio.getPacketType()!=RADIOLIB_SX126X_PACKET_TYPE_LORA)
@@ -559,16 +556,15 @@ static void Radio_ConfigLoRa(float BW, uint8_t SF, uint8_t PreambleLen, uint8_t 
   if(Radio.getActiveModem()!=RADIOLIB_SX127X_LORA)
     Radio.setActiveModem(RADIOLIB_SX127X_LORA);
 #endif
-  Radio.setBandwidth(BW);                // it turns out all this setup must be done again for SX1262, otherwise it does not work
-  Radio.setSpreadingFactor(SF);
+  Radio.setBandwidth(250.0);              // it turns out all this setup must be done again for SX1262, otherwise it does not work
+  Radio.setSpreadingFactor(7);
   Radio.setCodingRate(4+CRa);
   Radio.invertIQ(false);
   Radio.setPreambleLength(PreambleLen);
   Radio.explicitHeader();
   Radio.setCRC(true);
 #ifdef WITH_SX1262
-  Radio.setSyncWord((Sync&0xF0)|0x04, (Sync<<4)|0x04);
-  // Radio.setSyncWord(Sync, 0x44);
+  Radio.setSyncWord(Sync, 0x44);
 #endif
 #ifdef WITH_SX1276
   Radio.setSyncWord(Sync);
@@ -576,7 +572,7 @@ static void Radio_ConfigLoRa(float BW, uint8_t SF, uint8_t PreambleLen, uint8_t 
 }
 
 #ifdef WITH_MESHT
-static void Radio_ConfigMESHT(uint8_t CRa=1) { Radio_ConfigLoRa(250.0f, 7, 16, 0x2B, CRa); } // 8 preamble symbols, SYNC=0x2B
+static void Radio_ConfigMESHT(uint8_t CRa=1) { Radio_ConfigLoRa(16, 0x2B, CRa); } // 8 preamble symbols, SYNC=0x2B
 
 static void Radio_TxMESHT(MESHT_Packet &Packet)           // transmit a MESHT packet
 { Radio.transmit(Packet.Byte, Packet.Len);                // not clear, if we should wait here for the transmission to complete ?
@@ -638,7 +634,7 @@ static void Radio_TxFANET(FANET_Packet &Packet)                    // transmit a
   Radio_TxCount[Radio_SysID_FNT]++;
   LED_OGN_TX(20); }
 
-static void Radio_ConfigFANET(float BW=250.0f, uint8_t CRa=1) { Radio_ConfigLoRa(BW, 7, 5, 0xF1, CRa); } // 5 preamble symbols, SYNC=0xF1
+static void Radio_ConfigFANET(uint8_t CRa=1) { Radio_ConfigLoRa(5, 0xF1, CRa); } // 5 preamble symbols, SYNC=0xF1
 
 /*
 static void Radio_ConfigFANET(uint8_t CRa=4)                       // setup Radio for FANET
@@ -671,11 +667,11 @@ static void Radio_ConfigFANET(uint8_t CRa=4)                       // setup Radi
 */
 
 // reception slot with a possible transmission if TxPacket != NULL
-static int Radio_FANETslot(float BW, float Freq, float TxPower, uint32_t msTimeLen, FANET_Packet *TxPacket, TimeSync &TimeRef)
+static int Radio_FANETslot(float Freq, float TxPower, uint32_t msTimeLen, FANET_Packet *TxPacket, TimeSync &TimeRef)
 { // Serial.printf("FANETslot: %6.3fMHz %dms %c\n", 1e-6*Freq, msTimeLen, TxPacket?'T':'r');
   uint32_t msStart = millis();                       // [ms]
   Radio.standby();
-  Radio_ConfigFANET(BW);                               // setup for FANET, includes switching from FSK to LoRa
+  Radio_ConfigFANET();                               // setup for FANET, includes switching from FSK to LoRa
   Radio_setFrequency(Freq);                          // set frequency
   Radio.startReceive();                              // start receiving
   XorShift64(Random.Word);                           // randomize
@@ -737,10 +733,10 @@ static void Radio_ConfigLoRaWAN(uint8_t Chan, bool TX, float TxPower, uint8_t CR
   if(Radio.getPacketType()!=RADIOLIB_SX126X_PACKET_TYPE_LORA)
     Radio.config(RADIOLIB_SX126X_PACKET_TYPE_LORA);
   //          Spreadng Factor,   Bandwidth,               Coding Rate,  low-data-rate-optimize
-  // Radio.setModulationParams(7, RADIOLIB_SX126X_LORA_BW_125_0, 4+CRa, RADIOLIB_SX126X_LORA_LOW_DATA_RATE_OPTIMIZE_OFF);
+  Radio.setModulationParams(7, RADIOLIB_SX126X_LORA_BW_125_0, 4+CRa, RADIOLIB_SX126X_LORA_LOW_DATA_RATE_OPTIMIZE_OFF);
   //          Preamble length, CRC-type,                                                Payload (max) size, Header-Type,
-  // Radio.setPacketParams(8, TX?RADIOLIB_SX126X_LORA_CRC_ON:RADIOLIB_SX126X_LORA_CRC_OFF, 64, RADIOLIB_SX126X_LORA_HEADER_EXPLICIT,
-  //                          TX?RADIOLIB_SX126X_LORA_IQ_STANDARD:RADIOLIB_SX126X_LORA_IQ_INVERTED);  // InvertIQ
+  Radio.setPacketParams(8, TX?RADIOLIB_SX126X_LORA_CRC_ON:RADIOLIB_SX126X_LORA_CRC_OFF, 64, RADIOLIB_SX126X_LORA_HEADER_EXPLICIT,
+                           TX?RADIOLIB_SX126X_LORA_IQ_STANDARD:RADIOLIB_SX126X_LORA_IQ_INVERTED);  // InvertIQ
 #endif
 #ifdef WITH_SX1276
   if(Radio.getActiveModem()!=RADIOLIB_SX127X_LORA)
@@ -760,10 +756,12 @@ static void Radio_ConfigLoRaWAN(uint8_t Chan, bool TX, float TxPower, uint8_t CR
   Radio.setPreambleLength(8);
   Radio.setCRC(TX);                            // uplink with CRC, downlink without CRC
 
-  const float BaseFreq = 867.1;                //
+  const float BaseFreq = 867.1;
   const float ChanStep =   0.2;
-  Radio_setFrequency(BaseFreq+ChanStep*Chan);  // set frequency
-  if(TX) Radio_setTxPower(TxPower); }
+  Radio_setFrequency(BaseFreq+ChanStep*Chan);          // set frequency
+  if(TX) Radio_setTxPower(TxPower);
+
+}
 
 #endif
 
@@ -899,10 +897,9 @@ void Radio_Task(void *Parms)
 #endif
 
 #ifdef WITH_FANET
-    uint32_t FreqFNT = Radio_FreqPlan.getFreqFANET();            // frequency to transmit FANET
+    uint32_t FreqFNT = Radio_FreqPlan.getFreqFANET();           // frequency to transmit FANET
     if(FreqFNT)
-    { float BW=250.0f; if(Radio_FreqPlan.Plan>1) BW=500.0f;      // for plans 2,3 and 4 bandwidth 500kHz
-      Radio_ConfigFANET(BW);
+    { Radio_ConfigFANET();
       Radio_setFrequency(1e-6*FreqFNT);
       Radio.startReceive();                                      // start receiving FANET
       for( ; ; )
@@ -916,7 +913,7 @@ void Radio_Task(void *Parms)
       XorShift64(Random.Word);
       int32_t msSlot = 400-msTime;                               //
       // Serial.printf("Pre-slot: %ds @%dms Left:%dms\n", TimeRef.UTC, msTime, msSlot);
-      if(msSlot>40) PktCount+=Radio_FANETslot(BW, FreqFNT, Parameters.TxPower, msSlot, FNTpacket, TimeRef);
+      if(msSlot>40) PktCount+=Radio_FANETslot(FreqFNT, Parameters.TxPower, msSlot, FNTpacket, TimeRef);
     }
 
     // if(msTime<350)
@@ -960,7 +957,6 @@ void Radio_Task(void *Parms)
                else { AdslPacket2=AdslPacket1; }
 
     bool EU = Radio_FreqPlan.Plan<=1;
-    bool NZ = Radio_FreqPlan.Plan==4;
 
     uint32_t Hash = TimeRef.UTC;
     XorShift32(Hash);
@@ -978,11 +974,11 @@ void Radio_Task(void *Parms)
     uint8_t TxChan=0;
     uint8_t FLR_Chan  = Radio_FreqPlan.getChannel(TimeRef.UTC, 0, 0);
     uint8_t OGN_Chan  = Radio_FreqPlan.getChannel(TimeRef.UTC, 0, 1);
-    if(EU || NZ)
+    if(EU)
     { TxChan = Hash%3;
            if(TxChan==FLR_Chan) { TxPkt=ADSL_Pkt; TxProt=Radio_SysID_ADSL; RxProt=Radio_SysID_FLR_ADSL; }
-      else if(TxChan==OGN_Chan) { TxPkt=OGN_Pkt;  TxProt=Radio_SysID_OGN;  RxProt=Radio_SysID_OGN_ADSL; }
-      else    { if(EU) TxPwr+=13; TxPkt=ADSL_Pkt; TxProt=Radio_SysID_LDR;  RxProt=Radio_SysID_LDR; }
+      else if(TxChan==OGN_Chan) { TxPkt=OGN_Pkt; TxProt=Radio_SysID_OGN; RxProt=Radio_SysID_OGN_ADSL; }
+      else           { TxPwr+=13; TxPkt=ADSL_Pkt; TxProt=Radio_SysID_LDR; RxProt=Radio_SysID_LDR; }
     }
     else
     { Odd = Count1s(Hash)&1;
@@ -992,11 +988,10 @@ void Radio_Task(void *Parms)
     }
 
     msTime = millis()-TimeRef.sysTime;                // [ms] time since PPS
-    if(msTime>=1000) msTime-=1000;
     uint32_t SlotLen = 800-msTime;
-         if(SlotLen>800) SlotLen=800;
-    else if(SlotLen<200) SlotLen=200;
-    // Serial.printf("Slot #0: %3d:%3d\n", msTime, SlotLen);
+         if(SlotLen<250) SlotLen=250;
+    else if(SlotLen>480) SlotLen=480;
+
     PktCount+=Radio_Slot(TxChan, TxPwr, SlotLen, TxPkt, TxProt, TxChan, RxProt, TimeRef);
 
     msTime = millis()-TimeRef.sysTime;                // [ms] time since PPS
@@ -1023,11 +1018,11 @@ void Radio_Task(void *Parms)
     TxPkt = 0;
     FLR_Chan  = Radio_FreqPlan.getChannel(TimeRef.UTC, 1, 0);
     OGN_Chan  = Radio_FreqPlan.getChannel(TimeRef.UTC, 1, 1);
-    if(EU || NZ)
+    if(EU)
     { if(TxChan==2) TxChan=0;
-           if(TxChan==OGN_Chan) { TxPkt=OGN_Pkt;  TxProt=Radio_SysID_OGN;  RxProt=Radio_SysID_OGN_ADSL; }
-      else if(TxChan==FLR_Chan) { TxPkt=ADSL_Pkt; TxProt=Radio_SysID_ADSL; RxProt=Radio_SysID_FLR_ADSL; }
-      else    { if(EU) TxPwr+=13; TxPkt=ADSL_Pkt; TxProt=Radio_SysID_LDR;  RxProt=Radio_SysID_LDR; }
+           if(TxChan==FLR_Chan) { TxPkt=ADSL_Pkt; TxProt=Radio_SysID_ADSL; RxProt=Radio_SysID_FLR_ADSL; }
+      else if(TxChan==OGN_Chan) { TxPkt=OGN_Pkt; TxProt=Radio_SysID_OGN; RxProt=Radio_SysID_OGN_ADSL; }
+      else           { TxPwr+=13; TxPkt=ADSL_Pkt; TxProt=Radio_SysID_LDR; RxProt=Radio_SysID_LDR; }
     }
     else
     { Odd = !Odd;
@@ -1036,9 +1031,9 @@ void Radio_Task(void *Parms)
          else { TxChan=OGN_Chan; TxProt=Radio_SysID_OGN; RxProt=Radio_SysID_OGN; }
     }
 
-         if(SlotLen<100) SlotLen=100;
-    else if(SlotLen>400) SlotLen=400;
-    // Serial.printf("Slot #1: %3d:%3d\n", msTime, SlotLen);
+         if(SlotLen<250) SlotLen=250;
+    else if(SlotLen>480) SlotLen=480;
+
     PktCount+=Radio_Slot(TxChan, TxPwr, SlotLen, TxPkt, TxProt, TxChan, RxProt, TimeRef);
 
 #ifdef WITH_SX1276
@@ -1135,10 +1130,9 @@ void Radio_Task(void *Parms)
              // FSK_RxFIFO.isCorrupt()?'!':'_', PAW_TxFIFO.isCorrupt()?'!':'_');
     PktCountSum=0;
     SysLog_Line(Line, LineLen, 1, 25);
-    if(Parameters.Verbose && xSemaphoreTake(CONS_Mutex, 20))
+    if(Parameters.Verbose & 0b01 && xSemaphoreTake(CONS_Mutex, 20))
     { Serial.println(Line);
       xSemaphoreGive(CONS_Mutex); }
-
   }
 }
 

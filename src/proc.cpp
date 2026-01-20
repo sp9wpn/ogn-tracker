@@ -361,7 +361,7 @@ static void ReadStatus(OGN_Packet &Packet)
   uint8_t RxRateLog2=0; RxRate>>=1; while(RxRate) { RxRate>>=1; RxRateLog2++; }
   Packet.Status.RxRate = RxRateLog2;
 
-  if(Parameters.Verbose)
+  if(Parameters.Verbose & 0b01)
   { uint8_t Len=0;
     Len+=Format_String(Line+Len, "$POGNR,");                                  // NMEA report: radio status
     Len+=Format_UnsDec(Line+Len, (uint32_t)Radio_FreqPlan.Plan);              // which frequency plan
@@ -528,7 +528,7 @@ static void ProcessRxOGN(OGN_RxPacket<OGN_Packet> *RxPacket, uint8_t RxPacketIdx
     //          RxPacket->Packet.Header.AddrType, RxPacket->Packet.Header.Address, LatDist, LonDist);
 #ifdef WITH_POGNT
     { uint8_t Len=RxPacket->WritePOGNT(Line);                                         // print on the console as $POGNT
-      if(Parameters.Verbose)
+      if(Parameters.Verbose & 0b01)
       { xSemaphoreTake(CONS_Mutex, portMAX_DELAY);
         Format_String(CONS_UART_Write, Line, 0, Len);
         xSemaphoreGive(CONS_Mutex); }
@@ -575,7 +575,7 @@ static void ProcessRxOGN(OGN_RxPacket<OGN_Packet> *RxPacket, uint8_t RxPacketIdx
      if(Signif || Warn) IGClog_FIFO.Write(*RxPacket);
 #endif
 #ifdef WITH_PFLAA
-    if( Parameters.Verbose    // print PFLAA on the console for received packets
+    if( Parameters.Verbose & 0b01   // print PFLAA on the console for received packets
 #ifdef WITH_LOOKOUT
     && (!Tgt)
 #endif
@@ -656,7 +656,7 @@ static void ProcessRxADSL(ADSL_RxPacket *RxPacket, uint8_t RxPacketIdx, uint32_t
 #endif // WITH_LOOKOUT
 /*
 #ifdef WITH_PFLAA
-    if( Parameters.Verbose    // print PFLAA on the console for received packets
+    if( Parameters.Verbose & 0b01   // print PFLAA on the console for received packets
 #ifdef WITH_LOOKOUT
     && (!Tgt)
 #endif
@@ -941,10 +941,10 @@ void vTaskPROC(void* pvParameters)
       Position->Sent=1;
 #ifdef WITH_ADSL
       XorShift32(Random.RX);
-      ADSL_Packet *AdslPacket=0;                                               // keep the pointer to the
+      ADSL_Packet *AdslPacket=0;                                               // keep the pointer to the 
       { static uint8_t TxBackOff=0;
         if(TxBackOff) TxBackOff--;
-        else if(Radio_FreqPlan.Plan<=1 || Radio_FreqPlan.Plan==4)              // ADS-L only in Europe/Africa or NZ
+        else if(Radio_FreqPlan.Plan<=1)                                         // ADS-L only in Europe/Africa
         { AdslPacket = ADSL_TxFIFO.getWrite();
           AdslPacket->Init();
           AdslPacket->setAddress (Parameters.Address);
@@ -962,14 +962,13 @@ void vTaskPROC(void* pvParameters)
 #ifdef WITH_FANET
       static uint8_t FNTbackOff=0;
       if(FNTbackOff) FNTbackOff--;
-      else if(Parameters.TxFNT && Position->isValid() && Radio_FreqPlan.Plan<=4)
+      else if(Parameters.TxFNT && Position->isValid() && Radio_FreqPlan.Plan<=1)
       { FANET_Packet *Packet = FNT_TxFIFO.getWrite();
         Packet->setAddress(Parameters.Address);
         Position->EncodeAirPos(*Packet, Parameters.AcftType, !Parameters.Stealth);
         FNT_TxFIFO.Write();
         XorShift32(Random.RX);
-        uint8_t TxPeriod=8; if(Radio_FreqPlan.Plan>1) TxPeriod=4;                //
-        FNTbackOff = TxPeriod+(Random.RX%3); }                                   // every 10 or 5 sec
+        FNTbackOff = 8+(Random.RX&0x1); }                                   // every 9 or 10sec
 #endif // WITH_FANET
 #ifdef WITH_MESHT
       static uint8_t MSHbackOff=0;
@@ -1000,7 +999,7 @@ void vTaskPROC(void* pvParameters)
       // process own position, get the most dangerous target
       const LookOut_Target *Tgt=Look.ProcessOwn(PosPacket.Packet, PosTime, Position->GeoidSeparation/10);
 #ifdef WITH_PFLAA
-      if(Parameters.Verbose)
+      if(Parameters.Verbose & 0b01)
       { xSemaphoreTake(CONS_Mutex, portMAX_DELAY);
         Look.WritePFLA(CONS_UART_Write);                                  // produce PFLAU and PFLAA for all tracked targets
         xSemaphoreGive(CONS_Mutex);
@@ -1012,7 +1011,7 @@ void vTaskPROC(void* pvParameters)
 #endif // WITH_SDLOG
       }
 #else // WITH_PFLAA
-      if(Parameters.Verbose)
+      if(Parameters.Verbose & 0b01)
       { uint8_t Len=Look.WritePFLAU(Line);                                // $PFLAU, overall status
         xSemaphoreTake(CONS_Mutex, portMAX_DELAY);
         Format_String(CONS_UART_Write, Line, 0, Len);
@@ -1054,7 +1053,7 @@ void vTaskPROC(void* pvParameters)
       }
 #else  // WITH_LOOKOUT
 #ifdef WITH_PFLAA
-      if(Parameters.Verbose)
+      if(Parameters.Verbose & 0b01)
       { uint8_t Len=Look.WritePFLAU(Line);                                // $PFLAU, overall status
         xSemaphoreTake(CONS_Mutex, portMAX_DELAY);
         Format_String(CONS_UART_Write, Line, 0, Len);
