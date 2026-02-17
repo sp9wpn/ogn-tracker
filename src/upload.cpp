@@ -1,6 +1,7 @@
 #include "main.h"
 
 #ifdef WITH_WIFI
+#ifdef WITH_UPLOAD
 
 #include "socket.h"
 #include "wifi.h"
@@ -317,4 +318,5 @@ void vTaskUPLOAD(void* pvParameters)
   }
 }
 
+#endif // WITH_UPLOAD
 #endif // WITH_WIFI
