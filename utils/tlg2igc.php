@@ -327,15 +327,15 @@ function write_igc($data, $dir = './') {
 
     if (($e['ogn_rx'] ?? NULL) == 1 || $e['h_address'] != $info['tracker_id']) {
       if ($e['report_type'] === -1) {
-        if ($geoid !== NULL)
-          $e['altitude'] += $geoid->height($e['latitude'],$e['longitude']);
-
         $_l = 'EOA1'.sprintf("%06X",$e['h_address']).':C';
         $_l .= igc_coord($e['latitude'],$e['longitude']);
         if (($e['baroaltdiff'] ?? NULL) !== NULL)
           $_l .= sprintf("%05d",$e['altitude'] + $e['baroaltdiff']);
         else
           $_l .= "?????";
+
+        if ($geoid !== NULL)
+          $e['altitude'] += $geoid->height($e['latitude'],$e['longitude']);
         $_l .= sprintf("%05d",$e['altitude']);
       }
       fwrite($f,$_l.IGCEOL);
@@ -390,9 +390,6 @@ function write_igc($data, $dir = './') {
     switch ($e['report_type']) {
       case -1 : {				                                              // position report
         $last_pos_packet = $e;
-        if ($geoid !== NULL)
-          $e['altitude'] += $geoid->height($e['latitude'],$e['longitude']);
-
         $_l = 'B'.date('His',$e['unixtime']);
         $_l .= igc_coord($e['latitude'],$e['longitude']);
         $_l .= ($e['fix_quality'] >= '1' ? 'A' : 'V');
@@ -401,6 +398,8 @@ function write_igc($data, $dir = './') {
         else
           $_l .= "?????";
 
+        if ($geoid !== NULL)
+          $e['altitude'] += $geoid->height($e['latitude'],$e['longitude']);
         $_l .= sprintf("%05d",$e['altitude']);
         $_l .= Vlist_fill($iList, $e);
  
