@@ -1,17 +1,18 @@
-<?
+<?php
 ini_set("display_errors", 1);
 header('Content-type: text/plain');
 require_once('ogn_tlg.inc');
+require_once('GeoidPGM.php');
 date_default_timezone_set('UTC');
 
-$prog_name = 'tlg2igc.php';			// this appears in IGC files HOSOF header
-$version = '1.0-RC1';				// this appears in IGC files HOSOF header
+$prog_name = 'tlg2igc.php';			                  // this appears in IGC files HOSOF header
+$version = '1.0-RC1';			                      	// this appears in IGC files HOSOF header
 
-define("TLG_DIR",'LOGS/raw/');			// ending slash is mandatory!
-define("IGC_DIR",'LOGS/');			// ending slash is mandatory!
-define("TRACKERS_DICTIONARY",'trackers.csv');	// translate tracker IDs to own text (glider reg, CID, pilot name etc.)
-						// example line: 071A2B3C,myGlider
-
+define("TLG_DIR",'LOGS/raw/');		              	// ending slash is mandatory!
+define("IGC_DIR",'LOGS/');			                  // ending slash is mandatory!
+define("TRACKERS_DICTIONARY",'trackers.csv');	    // translate tracker IDs to own text (glider reg, CID, pilot name etc.)
+					                                      	// example line: 071A2B3C,myGlider
+define("PGM_FILE",'egm2008-5.pgm');		            // geoid undulation data, optional but recommended
 
 //
 // Receive TLG file
@@ -42,7 +43,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
   while (!feof($fIN)) {
     $bytes += fwrite($fTLG,fread($fIN,1024));
 
-    if ($bytes > 102400) {				// 100kB
+    if ($bytes > 102400) {		                      		// 100kB
       fclose($fIN);
       fclose($fTLG);
       http_response_code(500);
@@ -91,7 +92,7 @@ die("Upload OK.");
 function first_pass($data) {
 
   // scan fields for optional info
-  $info = array(			// pre-fill IGC mandatory fields
+  $info = array(		                                  	// pre-fill IGC mandatory fields
     'tracker_id' => (int) hexdec($data['file_id']) & 0xffffff,
     'first_pos_time' => NULL,
     'last_pos_time' => NULL,
@@ -105,35 +106,35 @@ function first_pass($data) {
     'firmware' => '',
     'hardware' => '',
     'have' => array (
-      	'pressure' => false,
-      	'temp' => false,
-      	'hum' => false,
-        'voltage' => false,
-	      'oxygen' => false,
-      	'pulse' => false,
-	      'audio_noise' => false,
-	      'turnrate' => false,
-      	'climbrate' => false,
+	'pressure' => false,
+	'temp' => false,
+	'hum' => false,
+	'voltage' => false,
+	'oxygen' => false,
+	'pulse' => false,
+	'audio_noise' => false,
+	'turnrate' => false,
+	'climbrate' => false,
     ),
   );
 
 
   foreach ($data['entries'] ?? array() as $e_id => $e) {
-    if (($e['ogn_rx'] ?? NULL) == 1)				// foreign (radio-received) packet
+    if (($e['ogn_rx'] ?? NULL) == 1)		                        		// foreign (radio-received) packet
       continue;
-    if ($e['h_address'] != $info['tracker_id'])			// not our packet - that shouldn't happen!
+    if ($e['h_address'] != $info['tracker_id'])		                	// not our packet - that shouldn't happen!
       continue;
     if (!isset($e['report_type']))
       continue;
 
-    if ($e['report_type'] === 1) {			// info packet
+    if ($e['report_type'] === 1) {		                            	// info packet
       foreach ($e['info'] as $_k => $_v)
         $info[$_k] = $_v;
       continue;
     };
 
 
-    if ($e['report_type'] === -1) {			// position packet
+    if ($e['report_type'] === -1) {		                            	// position packet
       if ($e['turnrate'] ?? NULL > 0) $info['have']['turnrate'] = true;
       if ($e['climbrate'] ?? NULL > 0) $info['have']['climbrate'] = true;
 
@@ -147,9 +148,9 @@ function first_pass($data) {
       if ($e['sts_temp'] ?? NULL !== NULL) $info['have']['temp'] = true;
       if ($e['sts_hum'] ?? NULL !== NULL) $info['have']['hum'] = true;
       if ($e['voltage'] ?? NULL !== NULL) $info['have']['voltage'] = true;
-      # if ($e['audio_noise'] ?? NULL > 0) $info['have']['audio_noise'] = true;		// listed in specs, but not used
-      # if ($e['oxygen'] ?? NULL > 0) $info['have']['oxygen'] = true;			// listed in specs, but not used
-      # if ($e['pulse'] ?? NULL > 0) $info['have']['pulse'] = true;			// listed in specs, but not used
+      # if ($e['audio_noise'] ?? NULL > 0) $info['have']['audio_noise'] = true;	        	// listed in specs, but not used
+      # if ($e['oxygen'] ?? NULL > 0) $info['have']['oxygen'] = true;	                		// listed in specs, but not used
+      # if ($e['pulse'] ?? NULL > 0) $info['have']['pulse'] = true;			                  // listed in specs, but not used
 
       if (($e['firmware'] ?? NULL) !== NULL) {
         $info['firmware'] = $e['firmware'];
@@ -173,6 +174,11 @@ function write_igc($data, $dir = './') {
 
   $file_serial = 0;
 
+  try {
+    $geoid = new GeoidPGM(PGM_FILE,200);
+  } catch (Exception $_exc) {
+    $geoid = NULL;
+  }
 
   // check if this is a new flight or continuation of previous file
   // this assumes tracker always uploads oldest file first
@@ -186,13 +192,13 @@ function write_igc($data, $dir = './') {
 
     if (file_exists($dir.$IGCfilename)) {
       $_append = check_append($dir.$IGCfilename,$data);
-      if ($_append === -1) {				// same TLG file, overwrite old IGC
+      if ($_append === -1) {			                                	// same TLG file, overwrite old IGC
         unlink($dir.$IGCfilename);
         break;
       };
 
       if ($_append === true) {
-        $append_igc_file = true;			// flight continues from previous TLG file
+        $append_igc_file = true;		                              	// flight continues from previous TLG file
         break;
       }
     } else {
@@ -211,32 +217,32 @@ function write_igc($data, $dir = './') {
 
   // I list (B-records)
   $iList = array();
-  Vlist_build($iList,'fixAccuracy','FXA',3);			// m (calculated from DOP and fix_quality)
+  Vlist_build($iList,'fixAccuracy','FXA',3);			                    // m (calculated from DOP and fix_quality)
   Vlist_build($iList,'satellites','SIU',2);
-  Vlist_build($iList,'speed','GSP',3,3.6);			// m/s -> kph
-  Vlist_build($iList,'heading','TRT',3);			// deg
+  Vlist_build($iList,'speed','GSP',3,3.6);			                      // m/s -> kph
+  Vlist_build($iList,'heading','TRT',3);		                        	// deg
   if ($info['have']['climbrate'])
-    Vlist_build($iList,'climbrate','VAR',4,10,true);		// 0.1 m/s
+    Vlist_build($iList,'climbrate','VAR',4,10,true);		              // 0.1 m/s
   if ($info['have']['turnrate'])
-    Vlist_build($iList,'turnrate','XTU',4,10,true);		// 0.1 deg/s
+    Vlist_build($iList,'turnrate','XTU',4,10,true);		                // 0.1 deg/s
   if ($info['have']['audio_noise'])
     Vlist_build($iList,'audio_noise','ENL',3);
 
   // J list (K-records)
   $jList = array();
   if ($info['have']['voltage'])
-    Vlist_build($jList,'voltage','XVB',6,1000);			// mV
+    Vlist_build($jList,'voltage','XVB',6,1000);			                  // mV
   if ($info['have']['temp'])
-    Vlist_build($jList,'sts_temp','OAT',3,1,true);		// C
+    Vlist_build($jList,'sts_temp','OAT',3,1,true);		                // C
   if ($info['have']['hum'])
-    Vlist_build($jList,'sts_hum','HUM',3);			// percent
+    Vlist_build($jList,'sts_hum','HUM',3);			                      // percent
 
   // M list (N-records)
   $mList = array();
   if ($info['have']['pulse'])
-    Vlist_build($mList,'pulse','HRT',3);			// bpm
+    Vlist_build($mList,'pulse','HRT',3);			                        // bpm
   if ($info['have']['oxygen'])
-    Vlist_build($mList,'oxygen','OXY',3);			// percent
+    Vlist_build($mList,'oxygen','OXY',3);		                          // percent
 
 
   if (!$append_igc_file) {
@@ -278,8 +284,12 @@ function write_igc($data, $dir = './') {
       fwrite($f,'HSCCLCOMPETITIONCLASS:'.$info['Class'].IGCEOL);
 
     fwrite($f,'HOSOFDOWNLOADSOFTWARE:'.$GLOBALS['prog_name'].','.$GLOBALS['version'].','.date('YmdHi').IGCEOL);
-    fwrite($f,'HFALGGNNSALTREFERENCE:GEO'.IGCEOL);
-    fwrite($f,'HFALPPRESSUREREFERENCE:ISA'.IGCEOL);
+    if ($geoid !== NULL)
+      fwrite($f,'HFALGALTGPS:ELL'.IGCEOL);
+    else
+      fwrite($f,'HFALGALTGPS:GEO'.IGCEOL);
+
+    fwrite($f,'HFALPALTPRESSREF:ISA'.IGCEOL);
 
     fwrite($f,'LXOGTRACKERMAC:'.$data['file_mac'].IGCEOL);
     fwrite($f,'LXOGTRACKERID:'.$data['file_id'].IGCEOL);
@@ -317,6 +327,9 @@ function write_igc($data, $dir = './') {
 
     if (($e['ogn_rx'] ?? NULL) == 1 || $e['h_address'] != $info['tracker_id']) {
       if ($e['report_type'] === -1) {
+        if ($geoid !== NULL)
+          $e['altitude'] += $geoid->height($e['latitude'],$e['longitude']);
+
         $_l = 'EOA1'.sprintf("%06X",$e['h_address']).':C';
         $_l .= igc_coord($e['latitude'],$e['longitude']);
         if (($e['baroaltdiff'] ?? NULL) !== NULL)
@@ -331,20 +344,20 @@ function write_igc($data, $dir = './') {
       // add LXOG line with more data from received packet
       $_l = '';
       switch ($e['report_type']) {
-        case -1 : {				// position report
+        case -1 : {				                                        // position report
           $_l = sprintf("LXOGEOA1%06X%s:Rly:%d,ACTyp:%d,FixQ:%d,DOP:%d,FixMod:%d,Spd:%.1f,TrnRte:%.1f,Hdg:%d,Clmb:%.1f",
-	              $e['h_address'], ($e['h_emergency'] ? '-EMG,':''), $e['h_relay'], $e['acfttype'], $e['fix_quality'], $e['dop'], $e['fixmode'],
-	            	$e['speed'], $e['turnrate'], $e['heading'], $e['climbrate']);
+		$e['h_address'], ($e['h_emergency'] ? '-EMG,':''), $e['h_relay'], $e['acfttype'], $e['fix_quality'], $e['dop'], $e['fixmode'],
+		$e['speed'], $e['turnrate'], $e['heading'], $e['climbrate']);
           break;
         };
-        case 0 : {				// status report
+        case 0 : {				                                        // status report
           $_l = sprintf("LXOGEOA1%06X%s:Rly:%d,SatNR:%d,Anois:%d,Rnois:%.1f,Tmp:%.1f,Hum:%d,Pres:%.1f,Sats:%d,Fw:%d,Hw:%d,TxPwr:%d,V:%.2f",
-		            $e['h_address'], ($e['h_emergency'] ? '-EMG':''), $e['h_relay'], $e['sat_SNR'], $e['audio_noise'] ?? -1,
-            		$e['radio_noise'], $e['sts_temp'] ?? -99, $e['sts_hum'] ?? -1, $e['sts_pressure'] ?? -1, $e['satellites'],
-	            	$e['firmware'], $e['hardware'], $e['tx_power'], $e['voltage'] ?? -1);
+		$e['h_address'], ($e['h_emergency'] ? '-EMG':''), $e['h_relay'], $e['sat_SNR'], $e['audio_noise'] ?? -1,
+		$e['radio_noise'], $e['sts_temp'] ?? -99, $e['sts_hum'] ?? -1, $e['sts_pressure'] ?? -1, $e['satellites'],
+		$e['firmware'], $e['hardware'], $e['tx_power'], $e['voltage'] ?? -1);
           break;
         };
-        case 1 : {				// info report
+        case 1 : {				                                        // info report
            $_l = sprintf("LXOGEOA1%06X:", $e['h_address']);
           foreach ($e['info'] as $_in => $_iv)
             $_l .= $_in.':'.$_iv.',';
@@ -375,8 +388,11 @@ function write_igc($data, $dir = './') {
       $e['audio_noise'] += 10;
 
     switch ($e['report_type']) {
-      case -1 : {				// position report
+      case -1 : {				                                              // position report
         $last_pos_packet = $e;
+        if ($geoid !== NULL)
+          $e['altitude'] += $geoid->height($e['latitude'],$e['longitude']);
+
         $_l = 'B'.date('His',$e['unixtime']);
         $_l .= igc_coord($e['latitude'],$e['longitude']);
         $_l .= ($e['fix_quality'] >= '1' ? 'A' : 'V');
@@ -384,6 +400,7 @@ function write_igc($data, $dir = './') {
           $_l .= sprintf("%05d",$e['altitude'] + $e['baroaltdiff']);
         else
           $_l .= "?????";
+
         $_l .= sprintf("%05d",$e['altitude']);
         $_l .= Vlist_fill($iList, $e);
  
@@ -391,7 +408,7 @@ function write_igc($data, $dir = './') {
         break;
       };
 
-      case 0 : {				// status packet
+      case 0 : {				                                              // status packet
         $last_sts_packet = $e;
 
         if (count($jList) > 0) {
@@ -409,7 +426,7 @@ function write_igc($data, $dir = './') {
         break;
       };
 
-      case 1 : {				// info packet
+      case 1 : {			                                              	// info packet
         // values from info packets are written once in the IGC file header
         break;
       };
@@ -422,9 +439,9 @@ function write_igc($data, $dir = './') {
 
 
 function check_append($file,$data) {
-
   // This won't work if flight spans across UTC midnight - sorry Australia!
-  if (!isset($data['file_time']))							// that shouldn't happen
+
+  if (!isset($data['file_time']))						                          	// that shouldn't happen
     return false;
 
   $f = @fopen($file,'r');
@@ -443,8 +460,8 @@ function check_append($file,$data) {
       $ref_date = explode(',',$ref_date);
       $ref_date = $ref_date[0];
 
-      if ($ref_date != date('ymd',$data['file_time']))					// different dates
-        return false;									// that shouldn't happen
+      if ($ref_date != date('ymd',$data['file_time']))			            		// different dates
+        return false;								                                       	// that shouldn't happen
     }
 
     if (substr($l,0,16) == 'LXOGTLGFILETIME:' && !isset($last_file_time)) {
@@ -464,7 +481,7 @@ function check_append($file,$data) {
 
   fclose($f);
 
-  if (($last_B ?? NULL) == '')					// no B records found!
+  if (($last_B ?? NULL) == '')			                                  		// no B records found!
     return false;
 
   $time_ref=date('His',$data['file_time']);
@@ -480,20 +497,22 @@ function check_append($file,$data) {
     $ref_start=(int) substr($f_pos_B,0,2) * 3600 + (int) substr($f_pos_B,2,2) * 60 + (int) substr($f_pos_B,4,2);
     $ref_end  =(int) substr($l_pos_B,0,2) * 3600 + (int) substr($l_pos_B,2,2) * 60 + (int) substr($l_pos_B,4,2);
 
-    if (abs($ref_start - $time_start) <= 30 && abs($ref_end - $time_end) <= 30 )		// same file, overwrite
+    if (abs($ref_start - $time_start) <= 30 && abs($ref_end - $time_end) <= 30 )	  	// same file, overwrite
       return -1;
-  } else {							// weird case: no B lines in file
-    if ((int) $last_file_time === (int) $data['file_time'])	// same file, overwrite
+  } else {						                                                              	// weird case: no B lines in file
+    if ((int) $last_file_time === (int) $data['file_time'])	                          // same file, overwrite
       return -1;
   };
 
-  if ($time_ref + 30 < $time_end)			// files overlapping a lot, weird!
+
+
+  if ($time_ref + 30 < $time_end)		                                                	// files overlapping a lot, weird!
     return false;
 
-  if ($time_ref - $time_end < 180)			// continuation, append to this IGC file
+  if ($time_ref - $time_end < 180)			                                              // continuation, append to this IGC file
     return true;
   
-  return false;						// different flights, create new IGC file
+  return false;					                                                            	// different flights, create new IGC file
 };
 
 
@@ -558,7 +577,7 @@ function Vlist_fill($list, $e) {
       if ($m['factor'] !== NULL && $m['factor'] !== 1)
         $v *= $m['factor'];
       $v = max(min($m['max'],$v),$m['min']);
-      $res .= substr(sprintf($m['strF'],$v),0,$m['len']);		// substr is just in case
+      $res .= substr(sprintf($m['strF'],$v),0,$m['len']);		                    // substr is just in case
     };
   };
 
@@ -600,8 +619,8 @@ function trackerSubDir($filename, $acftid) {
         $name = $la[1] ?? NULL;
 
         fclose($df);
-        if (strlen($name) > 0 && strpos($name,'/') === false && $name[0] !== '.' )	// no subdirectories allowed
-          return $name.'/';						// first match counts
+        if (strlen($name) > 0 && strpos($name,'/') === false && $name[0] !== '.' )      	// no subdirectories allowed
+          return $name.'/';						                                                    // first match counts
         else 
           return $file_id.'/';
       } else {
@@ -613,6 +632,5 @@ function trackerSubDir($filename, $acftid) {
   
   return $file_id.'/';
 }
-
 
 ?>

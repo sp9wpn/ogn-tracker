@@ -1,4 +1,4 @@
-<?
+<?php
 function parse_tlg($filename) {
   list($file_mac,$file_id,$file_time) = decode_filename($filename);
   $unixtime = $file_time;
