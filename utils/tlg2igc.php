@@ -122,6 +122,8 @@ function first_pass($data) {
   foreach ($data['entries'] ?? array() as $e_id => $e) {
     if (($e['ogn_rx'] ?? NULL) == 1)		                        		// foreign (radio-received) packet
       continue;
+	if (($e['ogn_prot'] ?? NULL) == 1)									// this bit means it is ADS-L packet
+	  continue;
     if ($e['h_address'] != $info['tracker_id'])		                	// not our packet - that shouldn't happen!
       continue;
     if (!isset($e['report_type']))
