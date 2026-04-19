@@ -1,27 +1,41 @@
 <?php
-ini_set("display_errors", 1);
+ini_set("display_errors", 0);
 header('Content-type: text/plain');
 require_once('ogn_tlg.inc');
 require_once('GeoidPGM.php');
 date_default_timezone_set('UTC');
 
-$prog_name = 'tlg2igc.php';			                  // this appears in IGC files HOSOF header
-$version = '1.0-RC1';			                      	// this appears in IGC files HOSOF header
 
-define("TLG_DIR",'LOGS/raw/');		              	// ending slash is mandatory!
-define("IGC_DIR",'LOGS/');			                  // ending slash is mandatory!
-define("TRACKERS_DICTIONARY",'trackers.csv');	    // translate tracker IDs to own text (glider reg, CID, pilot name etc.)
-					                                      	// example line: 071A2B3C,myGlider
-define("PGM_FILE",'egm2008-5.pgm');		            // geoid undulation data, optional but recommended
+$prog_name = 'tlg2igc.php';                                        // this appears in IGC files HOSOF header
+$version = '1.1-RC1';                                              // this appears in IGC files HOSOF header
+
+define("TLG_DIR",'LOGS/raw/');                                     // ending slash is mandatory!
+define("IGC_DIR",'LOGS/');                                         // ending slash is mandatory!
+define("TRACKERS_DICTIONARY",'trackers.csv');                      // translate tracker IDs to own text (glider reg, CID, pilot name etc.)
+                                                                   //   example line: 071A2B3C,myGlider
+define("PGM_FILE",'egm2008-5.pgm');                                // geoid undulation data, optional but recommended
+# define("UPLOAD_LOG",'upload.log');                               // optional
+# define("ALLOW_WEB_UPLOAD",true);                                 // allow web-form upload of TLG, used for testing only
+
 
 //
 // Receive TLG file
 //
 
 if ($_SERVER['REQUEST_METHOD'] == 'POST') {
+  if (!defined('ALLOW_WEB_UPLOAD'))
+    $_FILES = array();
+
+  if (!isset($_SERVER['HTTP_X_FILE_NAME']))
+    $_SERVER['HTTP_X_FILE_NAME'] = $_FILES['tlgfile']['name'] ?? NULL;
+
+  if ($_SERVER['HTTP_X_FILE_NAME'] == NULL) {
+    http_response_code(403);
+    die('Forbidden');
+  };
 
   // is received filename safe?
-  if (!ctype_xdigit($_SERVER['HTTP_X_FILE_NAME'][0]) || strpos($_SERVER['HTTP_X_FILE_NAME'],'/') !== false)
+  if (!ctype_xdigit($_SERVER['HTTP_X_FILE_NAME'][0] ?? '') || strpos($_SERVER['HTTP_X_FILE_NAME'],'/') !== false)
     $_SERVER['HTTP_X_FILE_NAME'] = 'unknown.TLG';
 
   $trackerSubDir = trackerSubDir($_SERVER['HTTP_X_FILE_NAME'] ?? NULL, $_SERVER['HTTP_X_OGNTRACKER_ACFTID'] ?? NULL);
@@ -30,7 +44,19 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 
   $TLGfilename = TLG_DIR.$trackerSubDir.substr($_SERVER['HTTP_X_FILE_NAME'] ?? 'unknown.TLG',0,-4).'_'.uniqid().'.TLG';
 
-  $fIN = fopen('php://input', 'r');
+
+  if (defined('UPLOAD_LOG')) {
+    $flog = fopen(UPLOAD_LOG,'a');
+    fwrite($flog, date('Y-m-d H:i:s ') . $_SERVER['REMOTE_ADDR'] . ' ' . $TLGfilename . PHP_EOL);
+    fclose($flog);
+  };
+
+
+  if (isset($_FILES['tlgfile']))
+    $fIN = fopen($_FILES['tlgfile']['tmp_name'],'r');			// HTTP-uploaded file
+  else
+    $fIN = fopen('php://input', 'r');					// method used by tracker firmware
+
   $fTLG = @fopen($TLGfilename, 'w');
 
   if ($fTLG === false) {
@@ -42,6 +68,13 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
   $bytes = 0;
   while (!feof($fIN)) {
     $bytes += fwrite($fTLG,fread($fIN,1024));
+
+    if ($bytes < 24) {
+      fclose($fIN);
+      fclose($fTLG);
+      http_response_code(500);
+      die("no data in input file");
+    };
 
     if ($bytes > 102400) {		                      		// 100kB
       fclose($fIN);
@@ -55,8 +88,23 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
   fclose($fTLG);
 
 } else {
-  http_response_code(403);
-  die('Forbidden');
+  if (defined('ALLOW_WEB_UPLOAD')) {					// Web upload form
+    header('Content-type: text/html');
+    echo  <<<EOD
+<html><title>tlg2igc</title>
+<body>
+<form enctype="multipart/form-data" method="POST">
+TLG file to upload: <input name="tlgfile" type="file" accept=".tlg,.tla" ><br />
+<input type="submit" value="Upload" />
+</form>
+</body></html>
+
+EOD;
+    die();
+  } else {
+    http_response_code(403);
+    die('Forbidden');
+  };
 };
 
 
@@ -120,14 +168,16 @@ function first_pass($data) {
 
 
   foreach ($data['entries'] ?? array() as $e_id => $e) {
-    if (($e['ogn_rx'] ?? NULL) == 1)		                        		// foreign (radio-received) packet
+    if (($e['ogn_rx'] ?? NULL) == 1)                                // foreign (radio-received) packet
       continue;
-    if ($e['h_address'] != $info['tracker_id'])		                	// not our packet - that shouldn't happen!
+    if (($e['ogn_prot'] ?? NULL) == 1)                              // this bit means it is ADS-L packet
+      continue;
+    if ($e['h_address'] != $info['tracker_id'])                     // not our packet - that shouldn't happen!
       continue;
     if (!isset($e['report_type']))
       continue;
 
-    if ($e['report_type'] === 1) {		                            	// info packet
+    if ($e['report_type'] === 1) {                                  // info packet
       foreach ($e['info'] as $_k => $_v)
         $info[$_k] = $_v;
       continue;
@@ -348,6 +398,15 @@ function write_igc($data, $dir = './') {
           $_l = sprintf("LXOGEOA1%06X%s:Rly:%d,ACTyp:%d,FixQ:%d,DOP:%d,FixMod:%d,Spd:%.1f,TrnRte:%.1f,Hdg:%d,Clmb:%.1f",
 		$e['h_address'], ($e['h_emergency'] ? '-EMG,':''), $e['h_relay'], $e['acfttype'], $e['fix_quality'], $e['dop'], $e['fixmode'],
 		$e['speed'], $e['turnrate'], $e['heading'], $e['climbrate']);
+
+          if (($last_pos_packet['latitude'] ?? NULL) !== NULL and ($last_pos_packet['heading'] ?? NULL) !== NULL) {                  // add relative position
+            $_cd = course_dist_points($last_pos_packet, $e);
+            $rel_b = ( (int) ($_cd['bearing'] - $last_pos_packet['heading'] + 540) % 360) - 180;
+            if ($rel_b == -180)
+              $rel_b = 180;
+            $_l .= sprintf(",RelDist:%.1f,RelBearing:%d",$_cd['dist'],$rel_b);
+          };
+
           break;
         };
         case 0 : {				                                        // status report
@@ -358,7 +417,7 @@ function write_igc($data, $dir = './') {
           break;
         };
         case 1 : {				                                        // info report
-           $_l = sprintf("LXOGEOA1%06X:", $e['h_address']);
+          $_l = sprintf("LXOGEOA1%06X:", $e['h_address']);
           foreach ($e['info'] as $_in => $_iv)
             $_l .= $_in.':'.$_iv.',';
           $_l = substr($_l,0,-1);
@@ -600,14 +659,19 @@ function igc_coord($lat,$lon) {
 
 
 function trackerSubDir($filename, $acftid) {
+  $year = date('Y');
+
   if (strlen($filename) < 6)
-    return '';
+    return $year.'/';
 
   list($file_mac,$file_id,$file_time) = decode_filename($filename);
   if ($file_id == NULL)
     $file_id = $acftid;
   if ($file_id === NULL || strlen($file_id) < 6)
-    return '';
+    return $year.'/';
+
+  if ($file_time != NULL)
+    $year = date('Y',$file_time);
 
   if ($df = @fopen(TRACKERS_DICTIONARY,'r')) {
     while (!feof($df)) {
@@ -619,9 +683,9 @@ function trackerSubDir($filename, $acftid) {
 
         fclose($df);
         if (strlen($name) > 0 && strpos($name,'/') === false && $name[0] !== '.' )      	// no subdirectories allowed
-          return $name.'/';						                                                    // first match counts
+          return $name.'/'.$year.'/';						                                                    // first match counts
         else 
-          return $file_id.'/';
+          return $file_id.'/'.$year.'/';
       } else {
         continue;
       }
@@ -629,7 +693,25 @@ function trackerSubDir($filename, $acftid) {
     fclose($df);
   };
   
-  return $file_id.'/';
+  return $file_id.'/'.$year.'/';
 }
+
+
+function course_dist_points($a,$b) {
+  $a['latitude']=deg2rad($a['latitude']);
+  $a['longitude']=deg2rad(-$a['longitude']);                        // W is positive
+  $b['latitude']=deg2rad($b['latitude']);
+  $b['longitude']=deg2rad(-$b['longitude']);                        // W is positive
+
+  $d=2*asin(sqrt(pow((sin(($a['latitude']-$b['latitude'])/2)),2)
+        + cos($a['latitude'])*cos($b['latitude'])*pow((sin(($a['longitude']-$b['longitude'])/2)),2)));
+  $d=($d * (180*60)/M_PI)*1.852;
+
+  $b=fmod(atan2(sin($a['longitude']-$b['longitude'])*cos($b['latitude']),
+           cos($a['latitude'])*sin($b['latitude'])-sin($a['latitude'])*cos($b['latitude'])*cos($a['longitude']-$b['longitude']))+2*M_PI, 2*M_PI);
+  $b=rad2deg($b);
+
+  return array('dist' => $d, 'bearing' => $b);
+};
 
 ?>
