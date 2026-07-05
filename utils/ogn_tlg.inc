@@ -40,9 +40,9 @@ function parse_tlg($filename) {
 function unpack_ogn1($p) {
   $o = array();
   $o['ogn_time16'] = (int) (reset(unpack('S', $p, 20))) << 4;
-  $o['ogn_SNR'] = (int) (reset(unpack('C', $p, 22)) && 0b00111111);
-  $o['ogn_prot'] = (int) (reset(unpack('C', $p, 22)) && 0b01000000) >> 6;
-  $o['ogn_rx'] = (int) (reset(unpack('C', $p, 22)) && 0b10000000) >> 7;
+  $o['ogn_SNR'] = (int) (reset(unpack('C', $p, 22)) & 0b00111111);
+  $o['ogn_prot'] = (int) (reset(unpack('C', $p, 22)) & 0b01000000) >> 6;
+  $o['ogn_rx'] = (int) (reset(unpack('C', $p, 22)) & 0b10000000) >> 7;
   $o['ogn_checksum'] = (int) (reset(unpack('C', $p, 23)));
 
   $o['h_address'] = (int) (reset(unpack('V', $p, 0)) & 0x00ffffff);
@@ -63,11 +63,17 @@ function unpack_ogn1($p) {
   if ($o['h_nonpos'] == 0) {					// position report
     $o['report_type'] = -1;					// there's no number for position packet
     $o['report_type_txt'] = 'position';
-    $o['latitude'] = (float) ((reset(unpack('V', $p, 4)) & 0x00ffffff) * 8 + 4) * (0.0001/60);
-    $o['time_s'] = (int) (reset(unpack('C', $p, 7)) & 0b00111111);
-    $o['fix_quality'] = (int) (reset(unpack('C', $p, 7)) & 0b11000000 >> 6);
+    $_lat = reset(unpack('V', $p, 4)) & 0x00ffffff;
+    if ($_lat & 0x800000) $_lat -= 0x1000000;			// sign-extend 24-bit signed Latitude
+    $o['latitude'] = (float) ($_lat * 8 + 4) * (0.0001/60);
 
-    $o['longitude'] = (float) ((reset(unpack('l', $p, 8)) & 0x00ffffff) * 16 + 8) * (0.0001/60);
+    $o['time_s'] = (int) (reset(unpack('C', $p, 7)) & 0b00111111);
+    $o['fix_quality'] = (int) (reset(unpack('C', $p, 7)) & 0b11000000) >> 6;
+
+    $_lon = reset(unpack('l', $p, 8)) & 0x00ffffff;
+    if ($_lon & 0x800000) $_lon -= 0x1000000;			// sign-extend 24-bit signed Longitude
+    $o['longitude'] = (float) ($_lon * 16 + 8) * (0.0001/60);
+
     $o['dop'] = (int) decodeVRuns(reset(unpack('C', $p, 11)) & 0b00111111, 4) + 10;	// GPS dillution of precision
     $_baroMSB = (int) (reset(unpack('C', $p, 11)) & 0b01000000) >> 6;
     $o['fixmode'] = (int) ((reset(unpack('C', $p, 11)) & 0b10000000) >> 7);		// 0=2d, 1=3d

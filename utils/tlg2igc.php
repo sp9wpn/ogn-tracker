@@ -7,7 +7,7 @@ date_default_timezone_set('UTC');
 
 
 $prog_name = 'tlg2igc.php';                                        // this appears in IGC files HOSOF header
-$version = '1.2';                                                  // this appears in IGC files HOSOF header
+$version = '1.3';                                                  // this appears in IGC files HOSOF header
 
 define("TLG_DIR",'LOGS/raw/');                                     // ending slash is mandatory!
 define("IGC_DIR",'LOGS/');                                         // ending slash is mandatory!
@@ -48,14 +48,6 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
   if (!is_dir(IGC_DIR.$trackerSubDir)) mkdir(IGC_DIR.$trackerSubDir, 0777, true);
 
   $TLGfilename = TLG_DIR.$trackerSubDir.substr($_SERVER['HTTP_X_FILE_NAME'] ?? 'unknown.TLG',0,-4).'_'.uniqid().'.TLG';
-
-
-  if (defined('UPLOAD_LOG')) {
-    $flog = fopen(UPLOAD_LOG,'a');
-    fwrite($flog, date('Y-m-d H:i:s ') . $_SERVER['REMOTE_ADDR'] . ' ' . $TLGfilename . PHP_EOL);
-    fclose($flog);
-  };
-
 
   if (isset($_FILES['tlgfile']))
     $fIN = fopen($_FILES['tlgfile']['tmp_name'],'r');			// HTTP-uploaded file
@@ -512,6 +504,15 @@ function write_igc($data, $dir = './') {
   };
 
   fclose($f);
+
+  if (defined('UPLOAD_LOG')) {
+    $flog = fopen(UPLOAD_LOG,'a');
+    fwrite($flog, date('Y-m-d H:i:s ') . $_SERVER['REMOTE_ADDR'] . ' ' . basename($GLOBALS['TLGfilename']));
+    fwrite($flog, ($append_igc_file ? ' +' : '  ') . $dir.$IGCfilename . PHP_EOL);
+    fclose($flog);
+  };
+
+
   return true;
 };
 
