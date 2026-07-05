@@ -7,7 +7,7 @@ date_default_timezone_set('UTC');
 
 
 $prog_name = 'tlg2igc.php';                                        // this appears in IGC files HOSOF header
-$version = '1.1-RC1';                                              // this appears in IGC files HOSOF header
+$version = '1.2';                                                  // this appears in IGC files HOSOF header
 
 define("TLG_DIR",'LOGS/raw/');                                     // ending slash is mandatory!
 define("IGC_DIR",'LOGS/');                                         // ending slash is mandatory!
@@ -34,8 +34,13 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
     die('Forbidden');
   };
 
+
+  $fname_to_check = strtoupper($_SERVER['HTTP_X_FILE_NAME']);
+  if (substr($fname_to_check,0,3) == 'OGN')
+    $fname_to_check = substr($fname_to_check,3);
+
   // is received filename safe?
-  if (!ctype_xdigit($_SERVER['HTTP_X_FILE_NAME'][0] ?? '') || strpos($_SERVER['HTTP_X_FILE_NAME'],'/') !== false)
+  if (!ctype_xdigit($fname_to_check[0] ?? '') || strpos($fname_to_check,'/') !== false)
     $_SERVER['HTTP_X_FILE_NAME'] = 'unknown.TLG';
 
   $trackerSubDir = trackerSubDir($_SERVER['HTTP_X_FILE_NAME'] ?? NULL, $_SERVER['HTTP_X_OGNTRACKER_ACFTID'] ?? NULL);
@@ -176,6 +181,8 @@ function first_pass($data) {
       continue;
     if (!isset($e['report_type']))
       continue;
+    if ($e['h_encrypted'] == 1)
+      continue;
 
     if ($e['report_type'] === 1) {                                  // info packet
       foreach ($e['info'] as $_k => $_v)
@@ -312,7 +319,7 @@ function write_igc($data, $dir = './') {
     fwrite($f,'HFFTYFRTYPE:XOG,OGN-tracker'.
 		(($_SERVER['HTTP_X_OGNTRACKER_PLATFORM'] ?? NULL) ? '/'.($_SERVER['HTTP_X_OGNTRACKER_PLATFORM']) : '') .IGCEOL);
 
-    fwrite($f,'HFGPSRECEIVER:UNK,unknown,999,99999'.IGCEOL); 
+    fwrite($f,'HFGPSRECEIVER:UNK,unknown,999,99999'.IGCEOL);
 
     if (isset($info['have']['pressure'])) {
       $_baroSens = ($_SERVER['HTTP_X_OGNTRACKER_BAROSENSOR'] ?? '');
@@ -371,13 +378,25 @@ function write_igc($data, $dir = './') {
   $last_sts_packet = array();
 
   foreach ($data['entries'] as $e) {
+    //
+    // CUSTOM / ENCRYPTED PACKET
+    if ($e['h_encrypted'] == 1) {
+      $_l = sprintf("LXOG%06X%s:%6s:Rly:%d,ENC",
+		$e['h_address'], ($e['h_emergency'] ? '-EMG':''), (isset($e['unixtime']) ? date('His',$e['unixtime']) : '......'), $e['h_relay']
+	);
+
+      fwrite($f,$_l.IGCEOL);
+      continue;
+    };
+
 
     //
     // FOREIGN (RADIO-RECEIVED) PACKET
 
     if (($e['ogn_rx'] ?? NULL) == 1 || $e['h_address'] != $info['tracker_id']) {
       if ($e['report_type'] === -1) {
-        $_l = 'EOA1'.sprintf("%06X",$e['h_address']).':C';
+        $_l = 'E'.date('His',$e['unixtime']);
+        $_l .= 'OA1'.sprintf("%06X",$e['h_address']).':C';
         $_l .= igc_coord($e['latitude'],$e['longitude']);
         if (($e['baroaltdiff'] ?? NULL) !== NULL)
           $_l .= sprintf("%05d",$e['altitude'] + $e['baroaltdiff']);
@@ -429,9 +448,10 @@ function write_igc($data, $dir = './') {
           break;
         };
       };
+
       if ($_l !== '')
         fwrite($f,$_l.IGCEOL);
-      
+
       continue;
     };
 

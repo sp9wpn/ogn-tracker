@@ -73,7 +73,7 @@ class FlightMonitor
      return Speed>=MinSpeed; }
 
    bool inFlight(void) const { return Takeoff.isValid() && !Landing.isValid(); }
-
+ 
    int SeekFirstLock(const GPS_Position &Position)
    { if(!Position.isValid()) return 0;                         // GPS must have a fix
      if(!FirstLock.isValid()) { FirstLock=Position; return 1; } // if FirstLock not fixed then copy the GPS position
@@ -84,7 +84,7 @@ class FlightMonitor
      if(Diff<0) { FirstLock=Position; return 1; }
      return 0; }
 
-   int Process(const GPS_Position &Position)                   // precess the GPS positions
+   int Process(const GPS_Position &Position)                   // process the GPS positions
    { // Position.Print();
      SeekFirstLock(Position);
      if(inFlight())                                            // if already in flight

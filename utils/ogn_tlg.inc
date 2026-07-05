@@ -279,7 +279,13 @@ function decode_filename($filename) {
 
   $a= explode('_',$filename);
 
-  if (count($a) >= 3) {
+  if (preg_match('/^OGN([[:xdigit:]]{6})_([[:xdigit:]]{8})_/', $filename, $_m )) {
+	// old format
+    $mac = $_m[1];
+    $id = $_m[1];
+    $time = hexdec($_m[2]);
+  } elseif (count($a) > 3) {
+	// new format
     $mac = $a[0];
     $id = $a[1];
     $time = hexdec($a[2]);

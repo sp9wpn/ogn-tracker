@@ -211,7 +211,7 @@ void vTaskUPLOAD(void* pvParameters)
   for( ; ; )
   { vTaskDelay(30000);
     if(Parameters.UploadURL[0]==0) continue;                         // don't upload if URL not defined
-    if(Flight.inFlight()) continue;                                  // don't unload if airborne
+    if(Flight.inFlight()) continue;                                  // don't upload if airborne
     if(FlashLog_isOpen()) continue;                                  // don't upload if a log file is being written
 
     uint32_t Oldest=0;
