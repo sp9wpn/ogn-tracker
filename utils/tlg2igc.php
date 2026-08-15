@@ -297,7 +297,7 @@ function write_igc($data, $dir = './') {
   if (!$append_igc_file) {
     // IGC header
     fwrite($f,'AXOG'.substr($data['file_id'],-6).'-'.$data['file_mac'].IGCEOL);
-    fwrite($f,'HFDTEDATE:'.date('ymd',$data['file_time']).','.sprintf("%02d",$file_serial).IGCEOL);
+    fwrite($f,'HFDTEDATE:'.date('dmy',$data['file_time']).','.sprintf("%02d",$file_serial).IGCEOL);
     fwrite($f,'HFPLTPILOTINCHARGE:'.$info['Pilot'].
 		(($info['PilotID'] ?? '') !== '' ? ' ('.$info['PilotID'].')' : '' ).IGCEOL); 
     fwrite($f,'HFCM2CREW2:'.$info['Crew'].IGCEOL); 
